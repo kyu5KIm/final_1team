@@ -32,6 +32,7 @@ ALLOWED_HOSTS = []
 
 INSTALLED_APPS = [
     'rest_framework',
+    "corsheaders",
     'django.contrib.admin',
     'django.contrib.auth',
     'django.contrib.contenttypes',
@@ -86,7 +87,7 @@ DATABASES = {
         'ENGINE': 'django.db.backends.mysql',
         'NAME': 'hpm_db',
         'USER': 'root',
-        'PASSWORD': '1234',
+        'PASSWORD': '1231231234',
         'HOST': 'localhost',
         'PORT': '3306',
         'OPTIONS': {
@@ -132,3 +133,12 @@ USE_TZ = True
 
 STATIC_URL = 'static/'
 
+CORS_ALLOW_ALL_ORIGINS = True
+
+# 녹음 파일 저장 경로
+MEDIA_URL = '/media/'
+MEDIA_ROOT = BASE_DIR / 'media'
+
+# RunPod 서버 주소
+RUNPOD_MINUTES_URL = "https://qnn2feg0a0txue-8501.proxy.runpod.net/generate"
+RUNPOD_STT_URL = "https://i1pkx6a9kiz0p2-8000.proxy.runpod.net/transcribe"  # WhisperX STT 서버
