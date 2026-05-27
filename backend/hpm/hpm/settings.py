@@ -87,7 +87,7 @@ DATABASES = {
         'ENGINE': 'django.db.backends.mysql',
         'NAME': 'hpm_db',
         'USER': 'root',
-        'PASSWORD': '1231231234',
+        'PASSWORD': '1234',
         'HOST': 'localhost',
         'PORT': '3306',
         'OPTIONS': {
