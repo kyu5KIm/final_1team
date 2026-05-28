@@ -1,0 +1,14 @@
+# Minimal FastAPI chatbot runtime.
+# Uses an existing chroma_db/ and does not run parsing, chunking, indexing, or evaluation.
+
+--extra-index-url https://download.pytorch.org/whl/cu121
+
+chromadb>=0.5.0
+cohere>=5.0.0
+fastapi>=0.110.0
+openai>=1.0.0
+python-dotenv>=1.0.0
+rank-bm25>=0.2.2
+sentence-transformers>=2.7.0
+torch
+uvicorn[standard]>=0.27.0
