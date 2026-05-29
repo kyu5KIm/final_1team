@@ -74,7 +74,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--answer-model", default=os.getenv("RAG_ANSWER_MODEL", "gpt-4.1-mini"))
     parser.add_argument("--openai-api-key-env", default="OPENAI_API_KEY")
     parser.add_argument("--hf-token-env", default="HF_TOKEN")
-    parser.add_argument("--cohere-model", default=os.getenv("COHERE_RERANK_MODEL", "rerank-multilingual-v3.0"))
+    parser.add_argument("--cohere-model", default=os.getenv("COHERE_RERANK_MODEL", "rerank-v3.5"))
     parser.add_argument("--query", required=True)
     parser.add_argument("--top-k", type=int, default=5)
     parser.add_argument("--dense-k", type=int, default=50)

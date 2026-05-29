@@ -5,17 +5,12 @@ from contextlib import asynccontextmanager
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
 from rag.service import RagService
 
 
 rag = RagService()
-
-
-class UTF8JSONResponse(JSONResponse):
-    media_type = "application/json; charset=utf-8"
 
 
 class ChatRequest(BaseModel):
@@ -35,12 +30,7 @@ async def lifespan(app: FastAPI):
     yield
 
 
-app = FastAPI(
-    title="Scenario RAG Chat API",
-    version="0.1.0",
-    lifespan=lifespan,
-    default_response_class=UTF8JSONResponse,
-)
+app = FastAPI(title="Scenario RAG Chat API", version="0.1.0", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,

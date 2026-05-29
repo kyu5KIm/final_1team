@@ -27,7 +27,7 @@ class RagSettings:
     answer_model: str = os.getenv("RAG_ANSWER_MODEL", "gpt-4.1-mini")
     openai_api_key_env: str = "OPENAI_API_KEY"
     hf_token_env: str = "HF_TOKEN"
-    cohere_model: str = os.getenv("COHERE_RERANK_MODEL", "rerank-multilingual-v3.0")
+    cohere_model: str = os.getenv("COHERE_RERANK_MODEL", "rerank-v3.5")
     top_k: int = 5
     dense_k: int = 50
     dense_fetch_k: int = 200
@@ -41,7 +41,7 @@ class RagSettings:
     exclude_chunk_types: str = "image_caption,chart_caption"
     max_context_chars: int = 9000
     temperature: float = 0.0
-    skip_rerank: bool = False
+    skip_rerank: bool = True
 
 
 def load_query_module() -> ModuleType:
