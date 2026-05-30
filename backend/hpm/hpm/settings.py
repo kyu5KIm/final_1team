@@ -140,4 +140,4 @@ MEDIA_URL = '/media/'
 MEDIA_ROOT = BASE_DIR / 'media'
 
 # RunPod 서버 주소
-RUNPOD_MINUTES_URL = "https://qnn2feg0a0txue-8501.proxy.runpod.net/generate"
+RUNPOD_MINUTES_URL = "https://grud52cfqhygb3-8000.proxy.runpod.net/generate"
