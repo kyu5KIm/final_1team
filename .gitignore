@@ -4,3 +4,6 @@ __pycache__/
 *.pyd
 .env
 db.sqlite3
+.aidlc-rule-details
+.claude
+CLAUDE.md
