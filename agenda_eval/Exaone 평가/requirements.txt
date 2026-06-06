@@ -1,0 +1,30 @@
+# 02_make_chunks.py, 03_0_index_chroma_openai.py, 03_1_evaluate_retrievers.py,
+# 04_query_chroma_openai.py, 04_1_chat_terminal.py, api/main.py, embedding_utils.py
+#
+# RunPod setup:
+# - Use a RunPod PyTorch 2.8.0 template/image.
+# - Do not reinstall torch from requirements.txt; keep the image-provided
+#   CUDA-matched torch build.
+#
+# EXAONE-3.5-7.8B-Instruct-AWQ compatibility:
+# - Use the current model repository main revision.
+# - The RunPod environment validated by the user loads the model with
+#   transformers 5.9.0 and gptqmodel.
+
+accelerate>=1.7.0
+chromadb>=1.0.12
+fastapi>=0.115.12
+gptqmodel>=2.0.0
+huggingface-hub>=0.31.0
+numpy>=1.24.0
+openpyxl>=3.1.0
+pandas>=2.0.0
+python-dotenv>=1.0.0
+rank-bm25>=0.2.2
+sentence-transformers>=4.1.0
+safetensors>=0.5.3
+tiktoken>=0.7.0
+tqdm>=4.66.0
+transformers>=4.43
+uvicorn[standard]>=0.27.0
+hf_transfer
