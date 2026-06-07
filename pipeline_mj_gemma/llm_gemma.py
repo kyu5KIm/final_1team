@@ -11,7 +11,7 @@ print(f"[LLM-Gemma] 모델 로딩 중: {MODEL_PATH}")
 llm = Llama(
     model_path=MODEL_PATH,
     n_ctx=4096,
-    n_gpu_layers=-1,   # GPU 전체 사용 (-1 = 전부)
+    n_gpu_layers=-1,   
     verbose=False,
 )
 

@@ -1,0 +1,44 @@
+version: "3.9"
+
+services:
+  llm:
+    image: vllm/vllm-openai:latest
+    runtime: nvidia
+    ports:
+      - "8001:8000"
+    volumes:
+      - /workspace:/workspace
+    command: >
+      --model /workspace/gemma-gguf/gemma-4-12B-it-qat-UD-Q4_K_XL.gguf
+      --tokenizer google/gemma-3-4b-it
+      --host 0.0.0.0
+      --port 8000
+      --max-model-len 4096
+    environment:
+      - HF_TOKEN=${HF_TOKEN}
+
+  stt:
+    build: ./stt_service
+    ports:
+      - "8002:8002"
+    runtime: nvidia
+    volumes:
+      - /workspace:/workspace
+
+  ocr:
+    build: ./ocr_service
+    ports:
+      - "8003:8003"
+
+  api:
+    build: ./pipeline_mj
+    ports:
+      - "8000:8000"
+    environment:
+      - LLM_URL=http://llm:8000
+      - STT_URL=http://stt:8002
+      - OCR_URL=http://ocr:8003
+    depends_on:
+      - llm
+      - stt
+      - ocr
