@@ -24,6 +24,12 @@ from .serializers import (
     build_meeting_participants,
 )
 
+def _normalize_filename(name):
+    name_part = re.split(r'\s+p\.', name, flags=re.IGNORECASE)[0]
+    name_part = re.split(r'\s+page', name_part, flags=re.IGNORECASE)[0]
+    name_part = re.sub(r'\.[a-zA-Z0-9]+$', '', name_part)
+    return re.sub(r'[\s_\-\(\)]+', '', name_part).lower()
+
 
 def _minutes_payload(meeting, text):
     return {
@@ -1281,23 +1287,18 @@ def generate_prep_material(request, meeting_id):
 
             if doc_id is None:
                 title = source.get("title", "")
-                import re
-                def normalize_filename(name):
-                    name_part = re.split(r'\s+p\.', name, flags=re.IGNORECASE)[0]
-                    name_part = re.split(r'\s+page', name_part, flags=re.IGNORECASE)[0]
-                    name_part = re.sub(r'\.[a-zA-Z0-9]+$', '', name_part)
-                    return re.sub(r'[\s_\-\(\)]+', '', name_part).lower()
+                
 
-                target_norm = normalize_filename(title)
+                target_norm = _normalize_filename(title)
                 doc = None
                 for d in Document.objects.filter(project=meeting.project):
-                    if normalize_filename(d.title) == target_norm:
+                    if _normalize_filename(d.title) == target_norm:
                         doc = d
                         break
 
                 if not doc:
                     for d in Document.objects.filter(project=meeting.project):
-                        d_norm = normalize_filename(d.title)
+                        d_norm = _normalize_filename(d.title)
                         if target_norm and d_norm and (target_norm in d_norm or d_norm in target_norm):
                             doc = d
                             break
@@ -1382,7 +1383,6 @@ def check_prep_status(request, meeting_id):
         response.raise_for_status()
         response.encoding = "utf-8"
         resp_data = response.json()
-        resp_data = response.json()
 
         print("=== RUNPOD RESPONSE ===")
         print(resp_data)
@@ -1419,22 +1419,17 @@ def check_prep_status(request, meeting_id):
             if doc_id is None:
                 title = source.get("title", "")
                 import re
-                def normalize_filename(name):
-                    name_part = re.split(r'\s+p\.', name, flags=re.IGNORECASE)[0]
-                    name_part = re.split(r'\s+page', name_part, flags=re.IGNORECASE)[0]
-                    name_part = re.sub(r'\.[a-zA-Z0-9]+$', '', name_part)
-                    return re.sub(r'[\s_\-\(\)]+', '', name_part).lower()
 
-                target_norm = normalize_filename(title)
+                target_norm = _normalize_filename(title)
                 doc = None
                 for d in Document.objects.filter(project=meeting.project):
-                    if normalize_filename(d.title) == target_norm:
+                    if _normalize_filename(d.title) == target_norm:
                         doc = d
                         break
 
                 if not doc:
                     for d in Document.objects.filter(project=meeting.project):
-                        d_norm = normalize_filename(d.title)
+                        d_norm = _normalize_filename(d.title)
                         if target_norm and d_norm and (target_norm in d_norm or d_norm in target_norm):
                             doc = d
                             break

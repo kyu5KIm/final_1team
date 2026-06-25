@@ -671,6 +671,9 @@ def jira_issue_types(request):
 @api_view(["GET", "POST"])
 @permission_classes([IsAuthenticated])
 def admin_user_list(request):
+    if request.user.role != "ADMIN":
+        return Response({"error": "관리자 권한이 필요합니다."}, status=status.HTTP_403_FORBIDDEN)
+
     if request.method == "POST":
         emp_no    = request.data.get("emp_no", "").strip()
         name      = request.data.get("name", "").strip()
@@ -746,6 +749,9 @@ def admin_user_list(request):
 @api_view(["GET", "PATCH", "DELETE"])
 @permission_classes([IsAuthenticated])
 def admin_user_detail(request, users_id):
+    if request.user.role != "ADMIN":
+        return Response({"error": "관리자 권한이 필요합니다."}, status=status.HTTP_403_FORBIDDEN)
+
     try:
         user = Users.objects.select_related("dept", "rank").get(users_id=users_id)
     except Users.DoesNotExist:
