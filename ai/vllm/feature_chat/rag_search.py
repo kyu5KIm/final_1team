@@ -23,6 +23,22 @@ from rag.embeddings import DEFAULT_HF_EMBEDDING_MODEL, make_embedder
 from rag.naver_news import NewsItem, news_context, news_source_references, search_naver_news
 from rag.qdrant_store import config_from_env, make_client, scroll_records, search_points
 
+for env_path in [
+    Path(__file__).resolve().parents[1] / ".env",
+    Path(__file__).resolve().parents[2] / ".env",
+    Path("/workspace/.env"),
+    Path("/workspace/runpod/.env"),
+    Path("/workspace/final_1team/.env"),
+    Path("/workspace/final_1team/runpod/.env"),
+]:
+    if env_path.exists():
+        load_dotenv(env_path, override=False)
+
+if os.getenv("CO_API_KEY") and not os.getenv("COHERE_API_KEY"):
+    os.environ["COHERE_API_KEY"] = os.getenv("CO_API_KEY", "")
+elif os.getenv("COHERE_API_KEY") and not os.getenv("CO_API_KEY"):
+    os.environ["CO_API_KEY"] = os.getenv("COHERE_API_KEY", "")
+
 try:
     import cohere
 except Exception:
@@ -366,7 +382,13 @@ def normalize_metadata(metadata: dict[str, Any] | None) -> dict[str, Any]:
 
 
 def source_filename(meta: dict[str, Any]) -> str:
-    name = str(meta.get("source_filename") or meta.get("source") or meta.get("file_name") or "unknown.pdf")
+    name = str(
+        meta.get("source_filename")
+        or meta.get("file_name")
+        or meta.get("title")
+        or meta.get("source")
+        or "unknown.pdf"
+    )
     return Path(name).name
 
 
@@ -385,6 +407,17 @@ def source_label(meta: dict[str, Any], include_page: bool = True) -> str:
     if include_page and page_label(meta):
         return f"{filename} p.{page_label(meta)}"
     return filename
+
+
+def payload_metadata(payload: dict[str, Any] | None) -> dict[str, Any]:
+    payload = payload or {}
+    raw_meta = payload.get("metadata") if isinstance(payload, dict) else {}
+    clean_meta = normalize_metadata(raw_meta if isinstance(raw_meta, dict) else {})
+    if payload.get("parent_id") not in (None, ""):
+        clean_meta.setdefault("parent_id", payload.get("parent_id"))
+    if payload.get("parent_text") not in (None, ""):
+        clean_meta.setdefault("parent_text", payload.get("parent_text"))
+    return clean_meta
 
 
 def source_matches(meta: dict[str, Any], source_contains: str | None) -> bool:
@@ -525,7 +558,15 @@ def tokenize(text: str) -> list[str]:
 
 def retrieval_text(record: CorpusRecord) -> str:
     meta = record.metadata
-    parts = [source_filename(meta), page_label(meta), str(meta.get("chunk_type") or "")]
+    parts = [
+        source_filename(meta),
+        str(meta.get("title") or ""),
+        str(meta.get("file_name") or ""),
+        str(meta.get("source") or ""),
+        str(meta.get("parent_title") or ""),
+        page_label(meta),
+        str(meta.get("chunk_type") or ""),
+    ]
     heading = meta.get("heading") or meta.get("article_title")
     if heading:
         parts.append(str(heading))
@@ -562,8 +603,7 @@ def dense_search(client: Any, collection: str, query_embedding: list[float], arg
     hits: list[SearchHit] = []
     for point in points:
         payload = getattr(point, "payload", None) or {}
-        raw_meta = payload.get("metadata") if isinstance(payload, dict) else {}
-        clean_meta = normalize_metadata(raw_meta if isinstance(raw_meta, dict) else {})
+        clean_meta = payload_metadata(payload if isinstance(payload, dict) else {})
         if not record_allowed(clean_meta, args, excluded_types):
             continue
         rank = len(hits) + 1
@@ -633,7 +673,10 @@ def rrf_fuse(dense_hits: list[SearchHit], bm25_hits: list[SearchHit], rrf_k: int
 
 
 def format_for_cohere(hit: SearchHit, max_chars: int = 12000) -> str:
-    return f"source: {source_label(hit.metadata)}\ntext: {normalize_context_text(hit.document)[:max_chars]}"
+    parent_title = str(hit.metadata.get("parent_title") or "").strip()
+    heading = str(hit.metadata.get("heading") or hit.metadata.get("article_title") or "").strip()
+    context_head = " | ".join(part for part in [source_label(hit.metadata), parent_title, heading] if part)
+    return f"source: {context_head}\ntext: {normalize_context_text(hit.document)[:max_chars]}"
 
 
 def cohere_rerank(co_client: Any, query: str, candidates: list[SearchHit], args: argparse.Namespace) -> list[SearchHit]:
@@ -698,14 +741,38 @@ def hit_relevance_score(hit: SearchHit) -> float:
     return 0.0
 
 
+def parent_context_text(hit: SearchHit) -> str:
+    parent_text = str(hit.metadata.get("parent_text") or "").strip()
+    if parent_text:
+        return parent_text
+    return str(hit.document or "")
+
+
+def parent_context_label(hit: SearchHit) -> str:
+    parent_title = str(hit.metadata.get("parent_title") or "").strip()
+    if parent_title:
+        return f"{source_label(hit.metadata)} / {parent_title}"
+    return source_label(hit.metadata)
+
+
 def build_context(hits: list[SearchHit], max_chars: int) -> str:
     parts: list[str] = []
     used = 0
+    seen_parents: set[str] = set()
     for hit in hits:
-        text = normalize_context_text(hit.document)
+        parent_id = str(hit.metadata.get("parent_id") or "").strip()
+        if parent_id and parent_id in seen_parents:
+            continue
+        if parent_id:
+            seen_parents.add(parent_id)
+        text = normalize_context_text(parent_context_text(hit))
         if not text:
             continue
-        block = f"[{hit.rank}] 출처: {source_label(hit.metadata)}\n{text}"
+        child_text = normalize_context_text(hit.document)
+        if child_text and child_text != text and hit.metadata.get("parent_text"):
+            child_preview = child_text[:500].rstrip()
+            text = f"{text}\n\n[검색된 하위 청크]\n{child_preview}"
+        block = f"[{hit.rank}] 출처: {parent_context_label(hit)}\n{text}"
         if used + len(block) > max_chars:
             block = block[: max(0, max_chars - used)].rstrip()
         if block:

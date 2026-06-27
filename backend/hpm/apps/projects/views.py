@@ -447,23 +447,20 @@ def project_jira_board(request, project_id):
 
     # 1) Agile 보드 이슈 조회 시도
     raw_issues = []
-    board_res = requests.get(
-        f"https://api.atlassian.com/ex/jira/{cloud_id}/rest/agile/1.0/board",
-        headers={"Authorization": f"Bearer {access_token}", "Accept": "application/json"},
-        params={"projectKeyOrId": project.jira_project_key, "type": "kanban"},
-        timeout=10,
+    board_jql = (
+        f"project = {project.jira_project_key} "
+        f"AND (statusCategory != Done OR statusCategoryChangedDate >= -14d) "
+        f"ORDER BY Rank ASC"
     )
 
-    if board_res.ok and board_res.json().get("values"):
-        board_id = board_res.json()["values"][0]["id"]
-        agile_res = requests.get(
-            f"https://api.atlassian.com/ex/jira/{cloud_id}/rest/agile/1.0/board/{board_id}/issue",
-            headers={"Authorization": f"Bearer {access_token}", "Accept": "application/json"},
-            params={"maxResults": 100, "fields": "summary,description,status,assignee,priority,duedate,created,parent,issuetype"},
-            timeout=10,
-        )
-        if agile_res.ok:
-            raw_issues = agile_res.json().get("issues", [])
+    board_res = requests.post(
+        f"https://api.atlassian.com/ex/jira/{cloud_id}/rest/api/3/search/jql",
+        headers={"Authorization": f"Bearer {access_token}", "Accept": "application/json", "Content-Type": "application/json"},
+        json={"jql": board_jql, "maxResults": 100, "fields": ["summary", "description", "status", "assignee", "priority", "duedate", "created", "parent", "issuetype"]},
+        timeout=10,
+    )
+    if board_res.ok:
+        raw_issues = board_res.json().get("issues", [])
 
     # 2) JQL 전체 조회를 병합해 Agile API에서 빠질 수 있는 Epic도 상위 업무 후보로 사용
     try:
@@ -476,7 +473,11 @@ def project_jira_board(request, project_id):
         if res.ok:
             jql_issues = res.json().get("issues", [])
             if raw_issues:
-                _merge_jira_issues(raw_issues, jql_issues)
+                parent_candidates = [
+                    issue for issue in jql_issues
+                    if _is_parent_candidate((issue.get("fields") or {}).get("issuetype") or {})
+                ]
+                _merge_jira_issues(raw_issues, parent_candidates)
             else:
                 raw_issues = jql_issues
     except requests.RequestException:
@@ -490,7 +491,6 @@ def project_jira_board(request, project_id):
         fields = issue.get("fields", {})
         jira_status = fields.get("status", {})
         column_id = _match_jira_column(jira_columns, jira_status)
-        print(f"[BOARD] 이슈 {issue.get('key')} 상태={jira_status.get('name')} → 컬럼={column_id}")
         assignee = fields.get("assignee") or {}
         priority = fields.get("priority") or {}
         parent = fields.get("parent") or {}

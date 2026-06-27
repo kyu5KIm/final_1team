@@ -193,6 +193,12 @@ export default function Header() {
     window.location.href = `${import.meta.env.VITE_API_BASE_URL}/jira/start/?user_id=${user.users_id}&next=${next}`;
   };
 
+  const handleJiraReconnect = () => {
+    if (!user?.users_id || jiraStatusLoading) return;
+    const next = encodeURIComponent(window.location.pathname + window.location.search);
+    window.location.href = `${import.meta.env.VITE_API_BASE_URL}/jira/start/?user_id=${user.users_id}&next=${next}`;
+  };
+
   const handleChangePassword = () => {
     setOpenPopover(null);
     navigate("/change-password");
@@ -264,6 +270,7 @@ export default function Header() {
                   work={profile?.work}
                   loading={profileLoading}
                   jiraConnected={jiraConnected === true}
+                  onJiraReconnect={handleJiraReconnect}
                   jiraStatusLoading={jiraStatusLoading}
                   showProfileInfo={!isAdmin}
                   showJiraConnect={!isAdmin}

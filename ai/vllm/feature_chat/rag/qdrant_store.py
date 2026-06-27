@@ -82,6 +82,10 @@ def payload_to_record(payload: dict[str, Any] | None) -> PointRecord:
     document = str(payload.get("document") or "")
     clean_metadata = dict(metadata)
     clean_metadata.setdefault("chunk_id", chunk_id)
+    if payload.get("parent_id") not in (None, ""):
+        clean_metadata.setdefault("parent_id", payload.get("parent_id"))
+    if payload.get("parent_text") not in (None, ""):
+        clean_metadata.setdefault("parent_text", payload.get("parent_text"))
     return PointRecord(chunk_id=chunk_id, document=document, metadata=clean_metadata)
 
 

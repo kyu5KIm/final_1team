@@ -32,6 +32,11 @@ def load_env_files() -> None:
 
 load_env_files()
 
+if os.getenv("CO_API_KEY") and not os.getenv("COHERE_API_KEY"):
+    os.environ["COHERE_API_KEY"] = os.getenv("CO_API_KEY", "")
+elif os.getenv("COHERE_API_KEY") and not os.getenv("CO_API_KEY"):
+    os.environ["CO_API_KEY"] = os.getenv("COHERE_API_KEY", "")
+
 if os.getenv("HF_HUB_ENABLE_HF_TRANSFER") == "1" and importlib.util.find_spec("hf_transfer") is None:
     os.environ["HF_HUB_ENABLE_HF_TRANSFER"] = "0"
 

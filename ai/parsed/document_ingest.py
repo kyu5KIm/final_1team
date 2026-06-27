@@ -220,7 +220,14 @@ def read_chunks_jsonl(path: Path) -> list[dict[str, Any]]:
             text = clean_text(str(obj.get("text") or obj.get("document") or ""))
             metadata = obj.get("metadata") if isinstance(obj.get("metadata"), dict) else {}
             if chunk_id and text:
-                chunks.append({"chunk_id": chunk_id, "document": text, "metadata": metadata})
+                chunk: dict[str, Any] = {"chunk_id": chunk_id, "document": text, "metadata": metadata}
+                parent_text = clean_text(str(obj.get("parent_text") or ""))
+                parent_id = str(obj.get("parent_id") or metadata.get("parent_id") or "").strip()
+                if parent_text:
+                    chunk["parent_text"] = parent_text
+                if parent_id:
+                    chunk["parent_id"] = parent_id
+                chunks.append(chunk)
     return chunks
 
 
@@ -282,11 +289,24 @@ def make_text_chunks(text: str, metadata: dict[str, Any], *, chunk_size: int | N
     for index, chunk_text in enumerate(groups):
         digest = hashlib.sha1(f"{doc_ref}:{index}:{chunk_text}".encode("utf-8")).hexdigest()[:10]
         chunk_id = f"document_{doc_ref}::text_chunk_{index:07d}_{digest}"
+        parent_id = f"document_{doc_ref}::parent_text_{index:07d}_{digest}"
+        parent_title = str(metadata.get("title") or metadata.get("source_filename") or "text")
         chunk_metadata = {
             **metadata,
             "chunk_id": chunk_id,
             "chunk_version": chunk_version,
             "chunk_type": "text",
+            "parent_id": parent_id,
+            "parent_type": "text",
+            "parent_title": parent_title,
+            "parent_page_start": 1,
+            "parent_page_end": 1,
+            "parent_token_count": token_count(chunk_text),
+            "parent_char_count": len(chunk_text),
+            "child_index": 1,
+            "child_count": 1,
+            "child_token_count": token_count(chunk_text),
+            "child_char_count": len(chunk_text),
             "page": 1,
             "page_start": 1,
             "page_end": 1,
@@ -298,7 +318,15 @@ def make_text_chunks(text: str, metadata: dict[str, Any], *, chunk_size: int | N
             "char_count": len(chunk_text),
             "parser": "text",
         }
-        chunks.append({"chunk_id": chunk_id, "document": chunk_text, "metadata": chunk_metadata})
+        chunks.append(
+            {
+                "chunk_id": chunk_id,
+                "parent_id": parent_id,
+                "parent_text": chunk_text,
+                "document": chunk_text,
+                "metadata": chunk_metadata,
+            }
+        )
     return chunks
 
 
@@ -314,6 +342,7 @@ def ensure_payload_indexes(client: Any, collection_name: str) -> None:
         "metadata.project_id",
         "metadata.document_id",
         "metadata.doc_id",
+        "metadata.parent_id",
     ]:
         try:
             client.create_payload_index(
@@ -350,8 +379,14 @@ def _canonical_chunk_payload(chunk: dict[str, Any], metadata: dict[str, Any]) ->
         **metadata,
         **chunk_metadata,
         "chunk_id": chunk["chunk_id"],
-        "parser": "mineru",
+        "parser": chunk_metadata.get("parser") or metadata.get("parser") or "mineru",
     }
+    parent_id = _first_value(chunk, "parent_id") or _first_value(combined_metadata, "parent_id")
+    parent_text = _first_value(chunk, "parent_text") or _first_value(combined_metadata, "parent_text")
+    if parent_id is not None:
+        combined_metadata.setdefault("parent_id", parent_id)
+    if parent_text is not None:
+        combined_metadata.setdefault("parent_text", parent_text)
 
     page = _int_or_none(
         _first_value(combined_metadata, "page", "page_no", "page_number", "page_start")
@@ -388,6 +423,7 @@ def _canonical_chunk_payload(chunk: dict[str, Any], metadata: dict[str, Any]) ->
         "source_type": _first_value(combined_metadata, "source_type", "document_type", "doc_type"),
         "viewer_type": _first_value(combined_metadata, "viewer_type"),
         "viewer_id": _first_value(combined_metadata, "viewer_id", "document_id"),
+        "parent_id": _first_value(combined_metadata, "parent_id"),
     }
     for key, value in canonical.items():
         if value is not None:
@@ -399,6 +435,10 @@ def _canonical_chunk_payload(chunk: dict[str, Any], metadata: dict[str, Any]) ->
         "content": chunk["document"],
         "metadata": combined_metadata,
     }
+    if parent_id is not None:
+        payload["parent_id"] = parent_id
+    if parent_text is not None:
+        payload["parent_text"] = parent_text
     payload.update({key: value for key, value in canonical.items() if value is not None})
     return payload
 

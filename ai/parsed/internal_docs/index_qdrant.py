@@ -137,6 +137,14 @@ def load_chunks(path: Path, strict: bool = False) -> list[ChunkRecord]:
             metadata = obj.get("metadata")
             if not isinstance(metadata, dict):
                 metadata = {}
+            else:
+                metadata = dict(metadata)
+            parent_id = obj.get("parent_id")
+            parent_text = obj.get("parent_text")
+            if parent_id not in (None, ""):
+                metadata.setdefault("parent_id", str(parent_id))
+            if parent_text not in (None, ""):
+                metadata.setdefault("parent_text", str(parent_text))
 
             chunk_id = obj.get("chunk_id")
             if not isinstance(chunk_id, str) or not chunk_id.strip():
@@ -188,6 +196,10 @@ def sanitize_metadata(metadata: dict[str, Any], chunk: ChunkRecord, args: argpar
     clean.setdefault("doc_id", str(metadata.get("doc_id") or ""))
     clean.setdefault("source_filename", str(metadata.get("source_filename") or ""))
     clean.setdefault("chunk_type", str(metadata.get("chunk_type") or "unknown"))
+    if metadata.get("parent_id") not in (None, ""):
+        clean.setdefault("parent_id", str(metadata.get("parent_id")))
+    if metadata.get("parent_text") not in (None, ""):
+        clean.setdefault("parent_text", str(metadata.get("parent_text")))
     return clean
 
 
@@ -223,7 +235,13 @@ def upsert_records(client: Any, collection: str, chunks: list[ChunkRecord], embe
             models.PointStruct(
                 id=qdrant_point_id(chunk.chunk_id),
                 vector=embedding,
-                payload={"chunk_id": chunk.chunk_id, "document": chunk.text, "metadata": metadata},
+                payload={
+                    "chunk_id": chunk.chunk_id,
+                    "document": chunk.text,
+                    "parent_id": metadata.get("parent_id"),
+                    "parent_text": metadata.get("parent_text"),
+                    "metadata": metadata,
+                },
             )
         )
     for batch in batched(points, args.upsert_batch_size):

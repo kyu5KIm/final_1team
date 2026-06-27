@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
+import logging
 import os
 import re
 import threading
@@ -36,6 +37,7 @@ from schemas import AgendaRequest, ChatRequest, MinutesRequest, PreparationReque
 
 
 app = FastAPI(title="HPM Core LLM/RAG Server", version="1.0.0")
+logger = logging.getLogger("uvicorn.error")
 MINUTES_JOBS: dict[str, dict[str, Any]] = {}
 MINUTES_JOBS_LOCK = threading.Lock()
 MINUTES_JOB_EXECUTOR = ThreadPoolExecutor(max_workers=int(os.getenv("MINUTES_JOB_WORKERS", "1")))
@@ -184,6 +186,13 @@ def _coerce_int_or_none(value: Any) -> int | None:
 
 def _clean_text(value: Any) -> str:
     return str(value or "").strip()
+
+
+def _normalize_preparation_field(value: Any) -> str:
+    text = _clean_text(value)
+    if not text or text in {"확인 필요", "확인필요"}:
+        return "-"
+    return text
 
 
 def _source_document_id(source: dict[str, Any]) -> int | None:
@@ -335,6 +344,9 @@ def normalize_preparation_response(
 
     if document_text and not any(fields.values()):
         fields["purpose"] = document_text
+
+    for key in ["purpose", "project_status", "rule", "effect"]:
+        fields[key] = _normalize_preparation_field(fields.get(key))
 
     meeting_id = _coerce_int_or_none(req.meeting_id)
     preparation_id = _coerce_int_or_none(getattr(req, "preparation_id", None))
@@ -526,6 +538,37 @@ def normalize_chat_sources(result: Any, sources: list[str], *, rag_used: bool) -
     return result
 
 
+def _is_document_existence_question(question: str) -> bool:
+    text = str(question or "").lower()
+    return any(keyword in text for keyword in ["파일", "문서", "자료", "pdf"]) and any(
+        keyword in text
+        for keyword in ["있", "존재", "등록", "업로드", "적재"]
+    )
+
+
+def _document_lookup_result(req: ChatRequest, rag_info: dict[str, Any]) -> dict[str, Any] | None:
+    if not rag_info.get("document_lookup") or not _is_document_existence_question(req.question):
+        return None
+    matches = [str(item).strip() for item in rag_info.get("document_lookup_matches") or [] if str(item).strip()]
+    if not matches:
+        return {
+            "answer": "해당 파일명과 일치하는 문서를 찾지 못했습니다.",
+            "citations": [],
+            "used_context_ids": [],
+            "confidence": "low",
+        }
+    if len(matches) == 1:
+        answer = "해당 파일은 등록된 문서에서 확인됩니다.\n\n출처:\n" + matches[0]
+    else:
+        answer = "해당 파일명과 일치하는 문서를 확인했습니다.\n\n출처:\n" + "\n".join(matches)
+    return {
+        "answer": answer,
+        "citations": matches,
+        "used_context_ids": list(range(1, len(matches) + 1)),
+        "confidence": "high",
+    }
+
+
 @app.get("/health")
 def health() -> dict[str, Any]:
     return {
@@ -546,6 +589,9 @@ def health() -> dict[str, Any]:
         "embedding_model": EMBEDDING_MODEL_ID,
         "preload_embedding_model": PRELOAD_EMBEDDING_MODEL,
         "feature_chat_dir": str(FEATURE_CHAT_DIR),
+        "cohere_rerank_configured": bool(os.getenv("COHERE_API_KEY") or os.getenv("CO_API_KEY")),
+        "rag_skip_rerank": os.getenv("RAG_SKIP_RERANK"),
+        "cohere_rerank_model": os.getenv("COHERE_RERANK_MODEL", "rerank-v3.5"),
     }
 
 
@@ -554,7 +600,10 @@ def preload_models() -> None:
     if PRELOAD_TEXT_MODEL:
         load_text_model()
     if PRELOAD_EMBEDDING_MODEL:
-        load_embedding_model()
+        try:
+            load_embedding_model()
+        except Exception as exc:
+            logger.warning("Embedding model preload failed; RAG will retry on first use: %s", exc)
 
 
 def _generate_minutes_response(req: MinutesRequest) -> TextResponse:
@@ -768,6 +817,13 @@ def chat(req: ChatRequest) -> TextResponse:
         except Exception as exc:
             cleanup_cuda()
             raise HTTPException(status_code=500, detail=f"Feature chat Qdrant search failed: {exc}") from exc
+    if rag_info is not None:
+        lookup_result = _document_lookup_result(req, rag_info)
+        if lookup_result is not None:
+            lookup_result.setdefault("rag_hit_count", rag_info.get("hit_count", 0))
+            lookup_result.setdefault("rag_collection", rag_info.get("collection"))
+            lookup_result.setdefault("rag_used", bool(lookup_result.get("citations")))
+            return TextResponse(result=lookup_result, elapsed_sec=round(time.perf_counter() - started, 3), model=TEXT_MODEL_ID)
     if not context:
         result = {
             "answer": "관련 문서에서 확인할 수 있는 내용이 없습니다.",
