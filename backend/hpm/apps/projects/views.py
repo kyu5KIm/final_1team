@@ -600,10 +600,9 @@ def project_jira_board_issue(request, project_id, issue_key):
             except Users.DoesNotExist:
                 return Response({"error": "담당자를 찾을 수 없습니다."}, status=status.HTTP_404_NOT_FOUND)
 
-            if not assignee.jira_account_id:
-                return Response({"error": "담당자의 Jira 계정이 연동되어 있지 않습니다."}, status=status.HTTP_400_BAD_REQUEST)
-
-            update_kwargs["assignee_account_id"] = assignee.jira_account_id
+            if assignee.jira_account_id:
+                update_kwargs["assignee_account_id"] = assignee.jira_account_id
+            # jira_account_id 없으면 Jira 담당자 필드는 건너뜀 (나머지 필드는 정상 저장)
         else:
             return Response({"error": "담당자는 프로젝트 구성원이어야 합니다."}, status=status.HTTP_400_BAD_REQUEST)
 

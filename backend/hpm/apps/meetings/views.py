@@ -645,7 +645,6 @@ def end_meeting(request, meeting_id):
             if not job_id:
                 raise Exception("STT 작업 등록 실패: job_id가 반환되지 않았습니다.")
 
-            # 비동기 STT Job 완료 시까지 폴링
             import time
             while True:
                 status_res = requests.get(f"{stt_base_url}/transcribe/jobs/{job_id}", timeout=10)
@@ -667,7 +666,6 @@ def end_meeting(request, meeting_id):
                 result = {}
             full_text = result.get("text", "")
 
-            # OneToOneField라서 .get() 사용 (record_path 제거)
             record, _ = Record.objects.get_or_create(meeting=meeting)
             _replace_record_utterances(record, result, full_text)
 
@@ -710,13 +708,14 @@ def _create_tasks_from_todo(meeting, todo_list):
         except (ValueError, TypeError):
             due_date = None
 
-        # owner(SPEAKER_00 등)로 SpeakerMapping 조회 → meeting_users FK 연결
+        # owner(=실제 이름)로 SpeakerMapping 조회함
+        # 이후 meeting_users FK 연결
         owner_label = todo.get("owner", "")
         meeting_users = None
         if owner_label:
             mapping = RecordUtterance.objects.filter(
                 record__meeting=meeting,
-                speaker=owner_label,
+                meeting_users__user__name=owner_label,
                 meeting_users__isnull=False,
             ).select_related("meeting_users").first()
             if mapping:
@@ -724,7 +723,7 @@ def _create_tasks_from_todo(meeting, todo_list):
 
         task = MeetingTask.objects.create(
             meeting=meeting,
-            meeting_users=meeting_users,   # FK로 저장 (owner 문자열 제거)
+            meeting_users=meeting_users,   # FK로 저장(owner 문자열 제거)
             title=todo.get("title", ""),
             content=todo.get("content", ""),
             due_date=due_date,
@@ -930,7 +929,7 @@ def task_list(request, meeting_id):
     return Response(MeetingTaskSerializer(task).data, status=status.HTTP_201_CREATED)
 
 
-@api_view(["PATCH"])
+@api_view(["GET", "PATCH", "DELETE"])
 def task_detail(request, meeting_id, task_id):
     meeting, error_response = _get_accessible_meeting(request, meeting_id)
     if error_response:
@@ -941,6 +940,9 @@ def task_detail(request, meeting_id, task_id):
     except MeetingTask.DoesNotExist:
         return Response({"error": "태스크를 찾을 수 없습니다."}, status=status.HTTP_404_NOT_FOUND)
 
+    if request.method =="DELETE":
+        task.delete()
+        return Response(status=status.HTTP_204_NO_CONTENT)
     old_meeting_users_id = task.meeting_users_id
 
     for field in ["title", "content", "due_date", "priority", "status"]:
@@ -1129,7 +1131,8 @@ def generate_minutes(request, meeting_id):
     meeting.meeting_document = data.get("content") or data.get("cotent", "")
     meeting.save()
     
-    # 기존 자동 생성되었던 태스크들 중복 방지를 위해 삭제 후 재생성
+    # 기존 자동 생성된 태스크들 중복 방지
+    # 삭제 후 재생성
     MeetingTask.objects.filter(meeting=meeting).delete()
     _create_tasks_from_todo(meeting, data.get("todo_list", []))
 
@@ -1186,26 +1189,23 @@ def generate_agenda(request, meeting_id):
 
     if uploaded_file:
         ocr_base_url = settings.RUNPOD_OCR_BASE_URL
-        if not ocr_base_url:
-            return Response({"error": "OCR 서버 주소가 설정되지 않았습니다."}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        file_bytes = uploaded_file.read()
         try:
-            file_bytes = uploaded_file.read()  
-
-            
-            try:
-                _store_ocr_source_document(
-                    meeting, uploaded_file, file_bytes, request.auth["user_id"], "agenda"
-                )
-            except Exception as e:
-                print("OCR 원본 저장 실패(무시):", e)
-
-            files = {"file": (uploaded_file.name, file_bytes, uploaded_file.content_type)}
-            ocr_res = requests.post(f"{ocr_base_url}/ocr/jobs", files=files, timeout=300)
-            ocr_res.raise_for_status()
-            job_id = ocr_res.json().get("job_id")
-            return Response({"status": "processing", "job_id": job_id}, status=status.HTTP_202_ACCEPTED)
+            _store_ocr_source_document(
+                meeting, uploaded_file, file_bytes, request.auth["user_id"], "agenda"
+            )
         except Exception as e:
-            return Response({"error": f"OCR 처리 실패: {str(e)}"}, status=status.HTTP_502_BAD_GATEWAY)
+            print("OCR 원본 저장 실패(무시):", e)
+
+        if ocr_base_url:
+            try:
+                files = {"file": (uploaded_file.name, file_bytes, uploaded_file.content_type)}
+                ocr_res = requests.post(f"{ocr_base_url}/ocr/jobs", files=files, timeout=10)
+                ocr_res.raise_for_status()
+                job_id = ocr_res.json().get("job_id")
+                return Response({"status": "processing", "job_id": job_id}, status=status.HTTP_202_ACCEPTED)
+            except Exception as e:
+                print(f"[generate_agenda] OCR 실패, 로컬 저장으로 대체: {e}")
 
     base_url = settings.RUNPOD_BASE_URL
     try:
@@ -1216,7 +1216,8 @@ def generate_agenda(request, meeting_id):
         agenda_res.encoding = "utf-8"
         agenda_data = agenda_res.json()
     except Exception as e:
-        return Response({"error": f"안건 생성 실패: {str(e)}"}, status=status.HTTP_502_BAD_GATEWAY)
+        print(f"[generate_agenda] 안건 AI 생성 실패, 빈 안건 반환: {e}")
+        return Response({"status": "completed", "ocr_text": "", "agenda": []}, status=status.HTTP_201_CREATED)
 
     items = agenda_data.get("result", {}).get("agendas", [])
 
@@ -1417,29 +1418,45 @@ def generate_prep_material(request, meeting_id):
 
     if uploaded_file:
         ocr_base_url = settings.RUNPOD_OCR_BASE_URL
-        if not ocr_base_url:
-            return Response({"error": "OCR 서버 주소가 설정되지 않았습니다."}, status=status.HTTP_502_BAD_GATEWAY)
+        file_bytes = uploaded_file.read()
         try:
-            file_bytes = uploaded_file.read() 
-
-            
-            try:
-                _store_ocr_source_document(
-                    meeting, uploaded_file, file_bytes, request.auth["user_id"], "prep"
-                )
-            except Exception as e:
-                print("OCR 원본 저장 실패(무시):", e)
-
-            files = {"file": (uploaded_file.name, file_bytes, uploaded_file.content_type)}
-            ocr_res = requests.post(f"{ocr_base_url}/ocr/jobs", files=files, timeout=300)
-            ocr_res.raise_for_status()
-            job_id = ocr_res.json().get("job_id")
-            return Response({
-                "status": "processing",
-                "job_id": job_id
-            }, status=status.HTTP_202_ACCEPTED)
+            doc = _store_ocr_source_document(
+                meeting, uploaded_file, file_bytes, request.auth["user_id"], "prep"
+            )
         except Exception as e:
-            return Response({"error": f"OCR 처리 실패: {str(e)}"}, status=status.HTTP_502_BAD_GATEWAY)
+            print("OCR 원본 저장 실패(무시):", e)
+            doc = None
+
+        if ocr_base_url:
+            try:
+                files = {"file": (uploaded_file.name, file_bytes, uploaded_file.content_type)}
+                ocr_res = requests.post(f"{ocr_base_url}/ocr/jobs", files=files, timeout=10)
+                ocr_res.raise_for_status()
+                job_id = ocr_res.json().get("job_id")
+                return Response({
+                    "status": "processing",
+                    "job_id": job_id
+                }, status=status.HTTP_202_ACCEPTED)
+            except Exception as e:
+                print(f"[generate_prep_material] OCR 실패, 로컬 저장으로 대체: {e}")
+
+        # RunPod 미설정 또는 실패 시 빈 준비자료 반환
+        prep, _ = MeetingPreparation.objects.get_or_create(meeting=meeting)
+        prep.purpose = ""
+        prep.project_status = ""
+        prep.rule = ""
+        prep.effect = "\n\n__RAW_SOURCES__\n[]"
+        prep.save()
+
+        if doc:
+            PreparationDocument.objects.filter(preparation=prep).delete()
+            PreparationDocument.objects.create(preparation=prep, document_id=doc.document_id)
+
+        meeting.meeting_document = _compile_prep_markdown(prep)
+        meeting.save(update_fields=["meeting_document"])
+
+        serializer = MeetingPreparationSerializer(prep, context={"request": request})
+        return Response({"status": "completed", "prep": serializer.data}, status=status.HTTP_201_CREATED)
 
     participants = []
     meeting_users = MeetingUsers.objects.filter(meeting=meeting).select_related("user")
@@ -1471,7 +1488,12 @@ def generate_prep_material(request, meeting_id):
         response.encoding = "utf-8"
         resp_data = response.json()
     except Exception as e:
-        return Response({"error": f"준비자료 생성 실패: {str(e)}"}, status=status.HTTP_502_BAD_GATEWAY)
+        print(f"[generate_prep_material] AI 생성 실패, 빈 준비자료 반환: {e}")
+        prep, _ = MeetingPreparation.objects.get_or_create(meeting=meeting)
+        meeting.meeting_document = _compile_prep_markdown(prep)
+        meeting.save(update_fields=["meeting_document"])
+        serializer = MeetingPreparationSerializer(prep, context={"request": request})
+        return Response({"status": "completed", "prep": serializer.data}, status=status.HTTP_201_CREATED)
 
     result_data = resp_data.get("result", {})
 

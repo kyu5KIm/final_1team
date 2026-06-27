@@ -148,29 +148,33 @@ class MeetingPreparationSerializer(serializers.ModelSerializer):
     def get_sources(self, obj):
         from apps.meetings.models import PreparationDocument
         from apps.documents.models import Document
-        from django.core.files.storage import default_storage
+        from django.conf import settings
+        import os
 
         sources_list = []
         try:
+            # Query preparation documents linked to this MeetingPreparation
             prep_docs = PreparationDocument.objects.filter(preparation=obj)
             for pd in prep_docs:
                 doc = Document.objects.filter(document_id=pd.document_id).first()
-                if not doc:
-                    continue
+                if doc:
+                    file_url = ""
+                    if doc.path:
+                        from django.core.files.storage import default_storage
+                        raw_url = default_storage.url(doc.path)
+                        if raw_url.startswith("http"):
+                            # S3 presigned URL
+                            file_url = raw_url
+                        else:
+                            # 로컬 미디어 URL 절대경로로 변환
+                            request = self.context.get("request")
+                            file_url = request.build_absolute_uri(raw_url) if request else raw_url
 
-
-                file_url = ""
-                if doc.path:
-                    try:
-                        file_url = default_storage.url(doc.path)
-                    except Exception:
-                        file_url = ""
-
-                sources_list.append({
-                    "document_id": doc.document_id,
-                    "title": doc.title,
-                    "file_url": file_url,
-                })
+                    sources_list.append({
+                        "document_id": doc.document_id,
+                        "title": doc.title,
+                        "file_url": file_url
+                    })
             return sources_list
         except Exception as e:
             print("Error in get_sources serializer:", e)

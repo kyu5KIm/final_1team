@@ -29,7 +29,11 @@ interface RecordingCtx {
   stopRecording: () => void;
   pauseRecording: (elapsedSeconds: number) => void;
   resumeRecording: () => void;
+  getRecorderState: () => RecordingState | null;
+  restoreRecorder: (recorder: MediaRecorder) => void;
 }
+
+type RecordingState = "inactive" | "recording" | "paused";
 
 const RecordingContext = createContext<RecordingCtx | null>(null);
 
@@ -137,8 +141,23 @@ export function RecordingProvider({ children }: { children: ReactNode }) {
     setIsPaused(false);
   }, []);
 
+  const getRecorderState = useCallback((): RecordingState | null => {
+    return (recorderRef.current?.state as RecordingState) ?? null;
+  }, []);
+
+  // 다른 탭/페이지 이동 후 돌아왔을 때 recorder를 교체하되 청크·타임스탬프는 유지
+  const restoreRecorder = useCallback((recorder: MediaRecorder) => {
+    recorder.ondataavailable = (event) => {
+      if (event.data && event.data.size > 0) {
+        chunksRef.current.push(event.data);
+      }
+    };
+    recorderRef.current = recorder;
+    streamRef.current = recorder.stream;
+  }, []);
+
   return (
-    <RecordingContext.Provider value={{ meetingId, startTime, isPaused, pausedElapsed, startRecording, finishRecording, stopRecording, pauseRecording, resumeRecording }}>
+    <RecordingContext.Provider value={{ meetingId, startTime, isPaused, pausedElapsed, startRecording, finishRecording, stopRecording, pauseRecording, resumeRecording, getRecorderState, restoreRecorder }}>
       {children}
     </RecordingContext.Provider>
   );

@@ -6,6 +6,7 @@ import mikeImg from "../../assets/meeting/mike.png";
 import recordingImg from "../../assets/meeting/recording.png";
 import stopImg from "../../assets/meeting/stop.png";
 import sendImg from "../../assets/meeting/send.png";
+import warningImg from "../../assets/meeting/warning.png";
 import {
   getMeetingDetail,
   startMeeting,
@@ -35,7 +36,7 @@ export default function MeetingDetailPage() {
   const { showAgenda = true, showPrepMaterial = true, status: navStatus } =
     (location.state as { showAgenda?: boolean; showPrepMaterial?: boolean; status?: string }) ?? {};
 
-  const { meetingId: ctxMeetingId, startTime: ctxStartTime, isPaused: ctxIsPaused, startRecording, finishRecording, stopRecording, pauseRecording, resumeRecording } = useRecording();
+  const { meetingId: ctxMeetingId, startTime: ctxStartTime, isPaused: ctxIsPaused, startRecording, finishRecording, stopRecording, pauseRecording, resumeRecording, getRecorderState, restoreRecorder } = useRecording();
 
   const isReturningToRecording = ctxMeetingId === meetingId && ctxStartTime !== null;
   const initialStatus = isReturningToRecording || navStatus === "in_progress" ? "in_progress" : "scheduled";
@@ -72,6 +73,8 @@ export default function MeetingDetailPage() {
     rule: "",
     effect: ""
   });
+
+  const [recorderLost, setRecorderLost] = useState(false);
 
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const chatRef = useRef<HTMLDivElement>(null);
@@ -182,7 +185,7 @@ export default function MeetingDetailPage() {
           }
 
           if (data.status === "in_progress") {
-            // 참석자: 녹음 컨텍스트 동기화
+            // 참석자(녹음 컨텍스트 동기화)
             if (ctxMeetingId !== meetingId) {
               startRecording(meetingId, data.elapsed_seconds ?? 0);
             } else if (data.is_paused && !ctxIsPaused) {
@@ -260,6 +263,16 @@ export default function MeetingDetailPage() {
     };
   }, [meetingId, navigate, stopRecording, currentUserId]);
 
+  // 다른 탭/페이지 이동 후 돌아오는 경우
+  //  recorder가 죽어있으면 재연결 필요 표시함
+  useEffect(() => {
+    if (!isReturningToRecording || !meeting || meeting.status !== "in_progress") return;
+    const state = getRecorderState();
+    if (!state || state === "inactive") {
+      setRecorderLost(true);
+    }
+  }, [isReturningToRecording, meeting?.status, getRecorderState]);
+
   useEffect(() => {
     chatRef.current?.scrollTo({ top: chatRef.current.scrollHeight, behavior: "smooth" });
   }, [chatMessages, chatLoading]);
@@ -296,7 +309,7 @@ export default function MeetingDetailPage() {
 
       await startMeeting(meetingId);
       startRecording(meetingId, 0, recorder);
-      recorder.start();
+      recorder.start(1000); // 1초마다 chunk 저장(탭 전환 시 데이터 유실 방지함)
 
       setMeeting((m) => (m ? { ...m, status: "in_progress" } : m));
       setElapsed(0);
@@ -304,6 +317,21 @@ export default function MeetingDetailPage() {
       console.error("회의 시작 중 에러 발생:", err);
       stream?.getTracks().forEach((track) => track.stop());
       alert("마이크 권한이 필요합니다. 브라우저에서 마이크 권한을 허용한 뒤 다시 시작해주세요.");
+    }
+  };
+
+  const handleReconnect = async () => {
+    let stream: MediaStream | null = null;
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const recorder = new MediaRecorder(stream);
+      restoreRecorder(recorder);
+      recorder.start(1000);
+      setRecorderLost(false);
+    } catch (err) {
+      console.error("마이크 재연결 실패:", err);
+      stream?.getTracks().forEach((track) => track.stop());
+      alert("마이크 권한이 필요합니다. 브라우저에서 마이크 권한을 허용한 뒤 다시 시도해주세요.");
     }
   };
 
@@ -608,19 +636,29 @@ export default function MeetingDetailPage() {
 
             {isCreator && (
               <>
-                <button
-                  onClick={isScheduled ? handleStart : isPaused ? handleResume : handlePause}
-                  disabled={endLoading}
-                  className="active:scale-95 transition w-[60px] h-[60px] flex items-center justify-center"
-                >
-                  {isScheduled && <img src={mikeImg} alt="녹음 시작" className="w-full h-full object-contain" />}
-                  {isInProgress && !isPaused && (
-                    <img src={recordingImg} alt="녹음 중지" className="w-[38px] h-[38px] object-contain" />
-                  )}
-                  {isInProgress && isPaused && (
-                    <img src={stopImg} alt="녹음 재개" className="w-[38px] h-[38px] object-contain" />
-                  )}
-                </button>
+                {isInProgress && recorderLost ? (
+                  <button
+                    onClick={handleReconnect}
+                    className="flex flex-col items-center gap-1 text-xs text-red-500 hover:text-[#623FB5] transition"
+                  >
+                    <img src={warningImg} alt="마이크 재연결" className="w-8 h-8 object-contain" />
+                    <span>마이크 재연결</span>
+                  </button>
+                ) : (
+                  <button
+                    onClick={isScheduled ? handleStart : isPaused ? handleResume : handlePause}
+                    disabled={endLoading}
+                    className="active:scale-95 transition w-[60px] h-[60px] flex items-center justify-center"
+                  >
+                    {isScheduled && <img src={mikeImg} alt="녹음 시작" className="w-full h-full object-contain" />}
+                    {isInProgress && !isPaused && (
+                      <img src={recordingImg} alt="녹음 중지" className="w-[38px] h-[38px] object-contain" />
+                    )}
+                    {isInProgress && isPaused && (
+                      <img src={stopImg} alt="녹음 재개" className="w-[38px] h-[38px] object-contain" />
+                    )}
+                  </button>
+                )}
                 {isInProgress ? (
                   <button
                     type="button"
