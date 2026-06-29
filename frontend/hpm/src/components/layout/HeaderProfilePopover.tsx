@@ -15,6 +15,7 @@ interface HeaderProfilePopoverProps {
   showProfileInfo?: boolean;
   showJiraConnect?: boolean;
   onJiraConnect?: () => void;
+  onJiraReconnect?: () => void;
   onChangePassword?: () => void;
   onLogout?: () => void;
 }
@@ -39,8 +40,9 @@ export default function HeaderProfilePopover({
   onJiraConnect,
   onChangePassword,
   onLogout,
+  onJiraReconnect,
 }: HeaderProfilePopoverProps) {
-  const jiraDisabled = jiraConnected || jiraStatusLoading;
+  const jiraDisabled = jiraStatusLoading;
 
   return (
     <section
@@ -79,27 +81,38 @@ export default function HeaderProfilePopover({
         </>
       ) : null}
       <div className="flex flex-col gap-[15px] px-[26px] py-[22px]">
-        {showJiraConnect ? (
-          <button
-            type="button"
-            onClick={jiraDisabled ? undefined : onJiraConnect}
-            disabled={jiraDisabled}
-            className={`flex items-center gap-[10px] rounded-[5px] border-0 bg-transparent p-0 text-[15px] font-normal leading-[1.2] transition-all duration-150 ease-out ${
-              jiraDisabled
-                ? "cursor-default text-[#969696]"
-                : "text-[#141414] hover:text-[#623FB5] active:scale-[0.98]"
-            }`}
-          >
-            <img src={jiraIcon} alt="" className="size-[20px] shrink-0 object-contain" />
-            <span>
-              {jiraStatusLoading
-                ? "Jira 연동 확인 중"
-                : jiraConnected
-                  ? "Jira 연동됨"
-                  : "Jira 연동하기"}
-            </span>
-          </button>
-        ) : null}
+          {showJiraConnect ? (
+            <div className="flex items-center justify-between">
+              <button
+                type="button"
+                onClick={jiraDisabled ? undefined : onJiraConnect}
+                disabled={jiraDisabled}
+                className={`flex items-center gap-[10px] rounded-[5px] border-0 bg-transparent p-0 text-[15px] font-normal leading-[1.2] transition-all duration-150 ease-out ${
+                  jiraDisabled
+                    ? "cursor-default text-[#969696]"
+                    : "text-[#141414] hover:text-[#623FB5] active:scale-[0.98]"
+                }`}
+              >
+                <img src={jiraIcon} alt="" className="size-[20px] shrink-0 object-contain" />
+                <span>
+                  {jiraStatusLoading
+                    ? "Jira 연동 확인 중"
+                    : jiraConnected
+                      ? "Jira 연동됨"
+                      : "Jira 연동하기"}
+                </span>
+              </button>
+              {jiraConnected && !jiraStatusLoading ? (
+                <button
+                  type="button"
+                  onClick={onJiraReconnect}
+                  className="text-[13px] text-[#969696] hover:text-[#623FB5] transition-colors underline"
+                >
+                  재연동
+                </button>
+              ) : null}
+            </div>
+          ) : null}
         <button
           type="button"
           onClick={onChangePassword}

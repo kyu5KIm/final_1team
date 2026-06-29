@@ -16,7 +16,7 @@ from apps.users.models import Users
 from apps.users.views import get_valid_access_token
 from apps.projects.models import Project, ProjectUsers
 from apps.meetings.jira_client import create_jira_issue_for_board
-from .models import Meeting, MeetingAgendas, MeetingTask, MeetingUsers, Record, RecordUtterance, MeetingPreparation, PreparationDocument
+from .models import Meeting, MeetingAgendas, MeetingTask, MeetingUsers, Record, RecordUtterance, MeetingPreparation, PreparationDocument,MeetingOcrDocument
 from .serializers import (
     MeetingAgendaSerializer,
     MeetingSerializer,
@@ -65,6 +65,19 @@ def _get_accessible_meeting(request, meeting_id):
 
 def _is_project_member(project, user_id):
     return ProjectUsers.objects.filter(project=project, user_id=user_id).exists()
+
+
+def _ocr_upload_document_response(document):
+    if document is None:
+        return {}
+    return {
+        "document_id": document.document_id,
+        "document": {
+            "document_id": document.document_id,
+            "name": document.title,
+            "path": document.path,
+        },
+    }
 
 
 def _minutes_payload(meeting, text):
@@ -1140,6 +1153,39 @@ def generate_minutes(request, meeting_id):
         "todo_list": data.get("todo_list", [])
     })
 
+def _store_ocr_source_document(meeting, uploaded_file, file_bytes, user_id, kind):
+    """OCR에 넣은 원본 파일을 S3에 저장 + Document 등록 + 회의 OCR 문서로 연결."""
+    from apps.documents.views import get_project_user_or_response
+    from apps.documents.models import Document
+    from django.core.files.base import ContentFile
+    from django.core.files.storage import default_storage
+
+    uploader = get_project_user_or_response(meeting.project_id, user_id)
+    if isinstance(uploader, Response):
+        return None  # 프로젝트 구성원이 아니면 등록만 생략
+
+    # 바이트를 ContentFile로 감싸 default_storage에 저장 → 저장된 경로를 받음
+    s3_key = f"documents/{meeting.project_id}/{uploaded_file.name}"
+    saved_path = default_storage.save(s3_key, ContentFile(file_bytes))
+
+    # DB에 문서 한 줄 추가 (objects.create = INSERT)
+    doc = Document.objects.create(
+        project_id=meeting.project_id,
+        uploader=uploader,
+        title=uploaded_file.name,
+        path=saved_path,
+    )
+
+    # 같은 회의·같은 용도 기존 기록은 정리하고 새로 연결
+    MeetingOcrDocument.objects.filter(meeting=meeting, kind=kind).delete()
+    MeetingOcrDocument.objects.create(
+        meeting=meeting,
+        document_id=doc.document_id,
+        kind=kind,
+    )
+    return doc
+
+
 
 # ── OCR + 기초 안건 생성 ─────────────────────────────────────────
 @api_view(["POST"])
@@ -1156,16 +1202,24 @@ def generate_agenda(request, meeting_id):
         if not ocr_base_url:
             return Response({"error": "OCR 서버 주소가 설정되지 않았습니다."}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
         try:
-            files = {"file": (uploaded_file.name, uploaded_file.read(), uploaded_file.content_type)}
+            file_bytes = uploaded_file.read()
+            document = None
+            try:
+                document = _store_ocr_source_document(
+                    meeting, uploaded_file, file_bytes, request.auth["user_id"], "agenda"
+                )
+            except Exception as e:
+                print("OCR 원본 저장 실패(무시):", e)
+
+            files = {"file": (uploaded_file.name, file_bytes, uploaded_file.content_type)}
             ocr_res = requests.post(f"{ocr_base_url}/ocr/jobs", files=files, timeout=300)
             ocr_res.raise_for_status()
             job_id = ocr_res.json().get("job_id")
-                                                                                   
             return Response({
                 "status": "processing",
-                "job_id": job_id
+                "job_id": job_id,
+                **_ocr_upload_document_response(document),
             }, status=status.HTTP_202_ACCEPTED)
-        
         except Exception as e:
             return Response({"error": f"OCR 처리 실패: {str(e)}"}, status=status.HTTP_502_BAD_GATEWAY)
 
@@ -1382,13 +1436,23 @@ def generate_prep_material(request, meeting_id):
         if not ocr_base_url:
             return Response({"error": "OCR 서버 주소가 설정되지 않았습니다."}, status=status.HTTP_502_BAD_GATEWAY)
         try:
-            files = {"file": (uploaded_file.name, uploaded_file.read(), uploaded_file.content_type)}
+            file_bytes = uploaded_file.read()
+            document = None
+            try:
+                document = _store_ocr_source_document(
+                    meeting, uploaded_file, file_bytes, request.auth["user_id"], "prep"
+                )
+            except Exception as e:
+                print("OCR 원본 저장 실패(무시):", e)
+
+            files = {"file": (uploaded_file.name, file_bytes, uploaded_file.content_type)}
             ocr_res = requests.post(f"{ocr_base_url}/ocr/jobs", files=files, timeout=300)
             ocr_res.raise_for_status()
             job_id = ocr_res.json().get("job_id")
             return Response({
                 "status": "processing",
-                "job_id": job_id
+                "job_id": job_id,
+                **_ocr_upload_document_response(document),
             }, status=status.HTTP_202_ACCEPTED)
         except Exception as e:
             return Response({"error": f"OCR 처리 실패: {str(e)}"}, status=status.HTTP_502_BAD_GATEWAY)
@@ -1413,7 +1477,7 @@ def generate_prep_material(request, meeting_id):
         "participants": participants,
         "agendas": agendas,
         "max_previous_meetings": 5,
-        "ocr_context": ""
+        "ocr_text": ""
     }
     print("회의 준비 자료 내용 잘 들어감?", payload)
     base_url = settings.RUNPOD_BASE_URL
@@ -1546,7 +1610,7 @@ def check_prep_status(request, meeting_id):
         "participants": participants,
         "agendas": agendas,
         "max_previous_meetings": 5,
-        "ocr_context": ocr_context
+        "ocr_text": ocr_context
     }
 
     base_url = settings.RUNPOD_BASE_URL
@@ -1554,7 +1618,6 @@ def check_prep_status(request, meeting_id):
         response = requests.post(f"{base_url}/generate-preparation", json=payload, timeout=300)
         response.raise_for_status()
         response.encoding = "utf-8"
-        resp_data = response.json()
         resp_data = response.json()
 
         print("=== RUNPOD RESPONSE ===")
@@ -1571,7 +1634,10 @@ def check_prep_status(request, meeting_id):
     prep.purpose = result_data.get("purpose") or ""
     prep.project_status = result_data.get("project_status") or ""
     prep.rule = result_data.get("rule") or ""
-    prep.effect = result_data.get("effect") or ""
+    import json
+    effect_val = result_data.get("effect") or ""
+    raw_sources_str = json.dumps(result_data.get("sources", []), ensure_ascii=False)
+    prep.effect = f"{effect_val}\n\n__RAW_SOURCES__\n{raw_sources_str}"
     prep.save()
 
     meeting.meeting_document = _compile_prep_markdown(prep)
@@ -1630,3 +1696,35 @@ def check_prep_status(request, meeting_id):
         "prep": serializer.data
     }, status=status.HTTP_200_OK)
 
+@api_view(["GET"])
+def meeting_ocr_documents(request, meeting_id):
+    from apps.documents.models import Document
+    from django.core.files.storage import default_storage
+
+    meeting, error_response = _get_accessible_meeting(request, meeting_id)
+    if error_response:
+        return error_response
+
+    kind = request.query_params.get("kind")  
+    links = MeetingOcrDocument.objects.filter(meeting=meeting)
+    if kind:
+        links = links.filter(kind=kind)
+
+    result = []
+    for link in links:
+        doc = Document.objects.filter(document_id=link.document_id).first()
+        if not doc:
+            continue
+        file_url = ""
+        if doc.path:
+            try:
+                file_url = default_storage.url(doc.path) 
+            except Exception:
+                file_url = ""
+        result.append({
+            "document_id": doc.document_id,
+            "title": doc.title,
+            "file_url": file_url,
+            "kind": link.kind,
+        })
+    return Response(result)

@@ -35,6 +35,7 @@ class Chunk:
     chunk_id: str
     text: str
     metadata: dict[str, Any]
+    parent_text: str = ""
 
 
 class Tokenizer:
@@ -241,6 +242,47 @@ def make_prefix(meta: dict[str, Any]) -> str:
     return "\n".join(parts)
 
 
+def safe_id_part(value: Any, *, fallback: str = "untitled", max_len: int = 48) -> str:
+    text = normalize_text(value)
+    text = re.sub(r"[^0-9A-Za-z가-힣]+", "_", text).strip("_")
+    if not text:
+        text = fallback
+    return text[:max_len].strip("_") or fallback
+
+
+def parent_title(meta: dict[str, Any], chunk_type: str) -> str:
+    if meta.get("article_no"):
+        sub = f"의{meta['article_sub_no']}" if meta.get("article_sub_no") else ""
+        title = f"({meta['article_title']})" if meta.get("article_title") else ""
+        return f"제{meta['article_no']}조{sub}{title}"
+    if meta.get("heading"):
+        return str(meta["heading"])
+    if meta.get("page_start"):
+        page = meta["page_start"] if meta.get("page_start") == meta.get("page_end") else f"{meta['page_start']}-{meta['page_end']}"
+        return f"{chunk_type} p.{page}"
+    return str(meta.get("source_filename") or chunk_type or "section")
+
+
+def parent_type_for(meta: dict[str, Any], chunk_type: str) -> str:
+    if chunk_type == "table":
+        return "table"
+    if meta.get("article_no"):
+        return "article"
+    if meta.get("heading"):
+        return "section"
+    return "page"
+
+
+def parent_id_for(meta: dict[str, Any], chunk_type: str, parent_text: str) -> str:
+    doc_id = str(meta.get("doc_id") or "unknown_doc")
+    parent_type = parent_type_for(meta, chunk_type)
+    title = safe_id_part(parent_title(meta, chunk_type), fallback=parent_type)
+    page_start = meta.get("page_start") or "na"
+    page_end = meta.get("page_end") or page_start
+    digest = sha1(parent_text.encode("utf-8")).hexdigest()[:10]
+    return f"{doc_id}::parent_{parent_type}_p{page_start}_{page_end}_{title}_{digest}"
+
+
 def base_metadata(blocks: list[dict[str, Any]], chunk_type: str, chunk_version: str, filename_by_sha: dict[str, str]) -> dict[str, Any]:
     first = blocks[0]
     pages = [p for p in (page_no(b) for b in blocks) if p is not None]
@@ -281,17 +323,32 @@ def emit_group(
         return []
     meta = base_metadata(blocks, chunk_type, args.chunk_version, filename_by_sha)
     prefix = make_prefix(meta)
+    parent_text = f"{prefix}\n\n{text}".strip() if prefix else text
+    parent_id = parent_id_for(meta, chunk_type, parent_text)
+    parent_type = parent_type_for(meta, chunk_type)
+    parent_name = parent_title(meta, chunk_type)
     available = max(150, args.chunk_size - tokenizer.count(prefix) - 8)
     pieces = tokenizer.split(text, available, args.overlap)
     chunks: list[Chunk] = []
     for idx, piece in enumerate(pieces, 1):
         final = f"{prefix}\n\n{piece}".strip() if prefix else piece
         meta_i = dict(meta)
+        meta_i["parent_id"] = parent_id
+        meta_i["parent_type"] = parent_type
+        meta_i["parent_title"] = parent_name
+        meta_i["parent_page_start"] = meta.get("page_start")
+        meta_i["parent_page_end"] = meta.get("page_end")
+        meta_i["parent_token_count"] = tokenizer.count(parent_text)
+        meta_i["parent_char_count"] = len(parent_text)
+        meta_i["child_index"] = idx
+        meta_i["child_count"] = len(pieces)
+        meta_i["child_token_count"] = tokenizer.count(final)
+        meta_i["child_char_count"] = len(final)
         meta_i["chunk_index_in_group"] = idx
         meta_i["chunk_count_in_group"] = len(pieces)
         meta_i["token_count"] = tokenizer.count(final)
         meta_i["char_count"] = len(final)
-        chunks.append(Chunk("", final, meta_i))
+        chunks.append(Chunk("", final, meta_i, parent_text=parent_text))
     return chunks
 
 
@@ -363,7 +420,14 @@ def write_jsonl(path: Path, chunks: list[Chunk]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w", encoding="utf-8") as f:
         for chunk in chunks:
-            f.write(json.dumps({"chunk_id": chunk.chunk_id, "text": chunk.text, "metadata": chunk.metadata}, ensure_ascii=False) + "\n")
+            payload = {
+                "chunk_id": chunk.chunk_id,
+                "text": chunk.text,
+                "parent_id": chunk.metadata.get("parent_id"),
+                "parent_text": chunk.parent_text,
+                "metadata": chunk.metadata,
+            }
+            f.write(json.dumps(payload, ensure_ascii=False) + "\n")
 
 
 def write_manifest(path: Path, args: argparse.Namespace, chunks: list[Chunk], tokenizer: Tokenizer) -> None:
@@ -379,6 +443,7 @@ def write_manifest(path: Path, args: argparse.Namespace, chunks: list[Chunk], to
         "encoding": tokenizer.encoding_name,
         "chunk_count": len(chunks),
         "doc_count": len(by_doc),
+        "chunking_strategy": "hierarchical_parent_child",
         "chunk_type_counts": dict(by_type),
         "token_count_min": min(token_counts) if token_counts else 0,
         "token_count_avg": round(sum(token_counts) / len(token_counts), 2) if token_counts else 0,

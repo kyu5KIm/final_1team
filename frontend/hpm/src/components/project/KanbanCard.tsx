@@ -1,11 +1,15 @@
+import { useState, type DragEvent } from "react";
 import type { KanbanTask } from "../../types/kanban";
 
 interface KanbanCardProps {
   task: KanbanTask;
   top: number;
   onClick: () => void;
-  isDragging?: boolean;
   canManage?: boolean;
+  isDragging?: boolean;
+  onDragStart?: (task: KanbanTask) => void;
+  onDragEnd?: () => void;
+  onDropOnCard?: (task: KanbanTask) => void;
 }
 
 export default function KanbanCard({
@@ -13,12 +17,52 @@ export default function KanbanCard({
   top,
   onClick,
   canManage = true,
+  isDragging = false,
+  onDragStart,
+  onDragEnd,
+  onDropOnCard,
 }: KanbanCardProps) {
+  const [isOver, setIsOver] = useState(false);
+
+  const handleDragStart = (event: DragEvent<HTMLElement>) => {
+    event.dataTransfer.effectAllowed = "move";
+    event.dataTransfer.setData("text/plain", task.code);
+    onDragStart?.(task);
+  };
+
+  const handleDragOver = (event: DragEvent<HTMLElement>) => {
+    if (!canManage) return;
+    event.preventDefault();
+    event.dataTransfer.dropEffect = "move";
+    if (!isOver) setIsOver(true);
+  };
+
+  const handleDragLeave = () => setIsOver(false);
+
+  const handleDrop = (event: DragEvent<HTMLElement>) => {
+    if (!canManage) return;
+    event.preventDefault();
+    event.stopPropagation();
+    setIsOver(false);
+    onDropOnCard?.(task);
+  };
+
   return (
     <article
-      className={`flex ml-[23px] w-[306px] mb-[18px] rounded-[10px] border-0 bg-[#FFFDFD] p-[14px] text-left transition-all duration-150 ease-out hover:bg-[#F4F5F8] hover:brightness-[0.96]
+      draggable={canManage}
+      onDragStart={handleDragStart}
+      onDragEnd={() => {
+        setIsOver(false);
+        onDragEnd?.();
+      }}
+      onDragOver={handleDragOver}
+      onDragLeave={handleDragLeave}
+      onDrop={handleDrop}
+      className={`flex ml-[23px] w-[306px] mb-[18px] select-none rounded-[10px] border-2 p-[14px] text-left transition-all duration-150 ease-out
+      ${canManage ? "cursor-grab active:cursor-grabbing" : ""}
+      ${isDragging ? "opacity-40 ring-2 ring-[#623FB5]" : ""}
+      ${isOver ? "border-[#623FB5] bg-[#F2EEFB]" : "border-transparent bg-[#FFFDFD] hover:bg-[#F4F5F8]"}
       focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#623FB5]`}
-      select-none
       style={{ top }}
       data-name="dashboard=card"
     >

@@ -70,6 +70,14 @@ export default function DocumentManagementPage() {
     void loadDocuments();
   }, [loadDocuments]);
 
+  useEffect(() => {
+    const existingIds = new Set(documents.map((item) => item.id));
+    setSelectedIds((current) => {
+      const next = new Set([...current].filter((id) => existingIds.has(id)));
+      return next.size === current.size ? current : next;
+    });
+  }, [documents]);
+
   const creators = useMemo(
     () => [
       ALL_DOCUMENT_FILTER,
@@ -176,6 +184,10 @@ export default function DocumentManagementPage() {
     if (!projectId || selectedIds.size === 0) return;
 
     const selectedDocs = documents.filter((item) => selectedIds.has(item.id));
+    if (selectedDocs.length === 0) {
+      setSelectedIds(new Set());
+      return;
+    }
     const currentUserId = Number(user?.users_id ?? user?.user_id);
     const hasUnauthorized = selectedDocs.some(
       (doc) => doc.uploaderId === undefined || Number(doc.uploaderId) !== currentUserId,
@@ -187,7 +199,7 @@ export default function DocumentManagementPage() {
 
     try {
       await Promise.all(
-        Array.from(selectedIds).map((documentId) => deleteDocument(projectId, documentId)),
+        selectedDocs.map((doc) => deleteDocument(projectId, doc.id)),
       );
       setSelectedIds(new Set());
       await loadDocuments();

@@ -15,6 +15,7 @@ import {
   getProjectJiraBoard,
   updateProjectJiraIssue,
   updateProjectJiraIssueStatus,
+  rankProjectJiraIssue,
   type JiraParentOption,
   type ProjectMember,
   type ProjectJiraBoard,
@@ -258,38 +259,66 @@ export default function KanbanBoardPage() {
   // 원인: handleDropTask 함수 선언부(`const handleDropTask = async (targetColumnId) => {`)가
   //       누락되어 함수 body가 전역 스코프에 노출된 상태였음
   // ─────────────────────────────────────────────────────────────────────────
-  const handleDropTask = async (targetColumnId: KanbanColumnId) => {
-    const task = draggingTask;
-    setDraggingTask(null);
-    if (!task || task.columnId === targetColumnId) return;
+  // 드래그한 카드를 targetColumn의 beforeTask 앞(없으면 맨 끝)에 놓고,
+  // 컬럼이 바뀌면 상태 변경, 위치가 바뀌면 순서(Rank) 변경을 Jira에 반영한다.
+  const reorderAndPersist = async (
+    task: KanbanTask,
+    targetColumnId: KanbanColumnId,
+    beforeTask: KanbanTask | null,
+  ) => {
     if (!projectId) return;
 
     const fromColumnId = task.columnId;
-    const targetStatusNames =
-      boardColumns.find((column) => column.id === targetColumnId)?.statusNames || [];
+    const snapshot = tasks;
 
-    setTasks((current) =>
-      current.map((item) =>
-        item.id === task.id ? { ...item, columnId: targetColumnId } : item,
-      ),
-    );
+    const without = tasks.filter((item) => item.id !== task.id);
+    const movingUpdated = { ...task, columnId: targetColumnId };
+    let next: KanbanTask[];
+    if (!beforeTask) {
+      next = [...without, movingUpdated];
+    } else {
+      const index = without.findIndex((item) => item.id === beforeTask.id);
+      next = [...without];
+      next.splice(index, 0, movingUpdated);
+    }
+    setTasks(next);
 
     try {
-      await updateProjectJiraIssueStatus(
-        projectId,
-        task.code,
-        targetColumnId,
-        targetStatusNames,
-      );
+      if (fromColumnId !== targetColumnId) {
+        const targetStatusNames =
+          boardColumns.find((column) => column.id === targetColumnId)?.statusNames || [];
+        await updateProjectJiraIssueStatus(projectId, task.code, targetColumnId, targetStatusNames);
+      }
+
+      const columnTasks = next.filter((item) => item.columnId === targetColumnId);
+      const index = columnTasks.findIndex((item) => item.id === task.id);
+      const belowNeighbor = columnTasks[index + 1];
+      const aboveNeighbor = columnTasks[index - 1];
+
+      if (belowNeighbor) {
+        await rankProjectJiraIssue(projectId, task.code, { beforeIssueKey: belowNeighbor.code });
+      } else if (aboveNeighbor) {
+        await rankProjectJiraIssue(projectId, task.code, { afterIssueKey: aboveNeighbor.code });
+      }
     } catch (error) {
-      console.error("Jira 상태 변경 실패:", error);
-      setTasks((current) =>
-        current.map((item) =>
-          item.id === task.id ? { ...item, columnId: fromColumnId } : item,
-        ),
-      );
-      alert("Jira 상태 변경에 실패했습니다.");
+      console.error("카드 이동 실패:", error);
+      setTasks(snapshot);
+      alert("카드 이동에 실패했습니다.");
     }
+  };
+
+  const handleDropOnCard = (targetTask: KanbanTask) => {
+    const task = draggingTask;
+    setDraggingTask(null);
+    if (!task || task.id === targetTask.id) return;
+    reorderAndPersist(task, targetTask.columnId, targetTask);
+  };
+
+  const handleDropOnColumn = (columnId: KanbanColumnId) => {
+    const task = draggingTask;
+    setDraggingTask(null);
+    if (!task) return;
+    reorderAndPersist(task, columnId, null);
   };
 
   // ─── [BUG FIX] handleCardDragStart / handleCardDragEnd 선언 추가 ─────────
@@ -433,7 +462,8 @@ export default function KanbanBoardPage() {
             onEditTask={openEditModal}
             onCardDragStart={handleCardDragStart}
             onCardDragEnd={handleCardDragEnd}
-            onDropTask={handleDropTask}
+            onDropOnColumn={handleDropOnColumn}
+            onDropOnCard={handleDropOnCard}
             draggingTaskId={draggingTask?.id ?? null}
             canManage={canManageJira}
           />

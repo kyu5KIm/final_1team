@@ -18,8 +18,8 @@ from .serializers import DocumentSerializer
 
 ALLOWED_EXTENSIONS = {".pdf", ".docx", ".txt"}
 MAX_FILE_SIZE = 20 * 1024 * 1024
-PARSED_REQUEST_TIMEOUT = 300
-PARSED_STATUS_TIMEOUT = 20
+PARSED_REQUEST_TIMEOUT = 1200
+PARSED_STATUS_TIMEOUT = 1000
 NOTIFIED_INGEST_JOBS = set()
 
 
@@ -43,11 +43,26 @@ def _content_type_for_file(path):
 
 
 def _parsed_metadata(project_id, documents):
+    document_entries = [
+        {
+            "index": index,
+            "document_id": doc.document_id,
+            "filename": doc.title,
+            "path": doc.path,
+        }
+        for index, doc in enumerate(documents, start=1)
+    ]
     return json.dumps(
         {
             "project_id": str(project_id),
             "source": "document_upload",
             "source_type": "internal_document",
+            "documents": document_entries,
+            "document_map": {
+                entry["filename"]: entry["document_id"]
+                for entry in document_entries
+                if entry["filename"]
+            },
             "document_ids": [doc.document_id for doc in documents],
             "filenames": [doc.title for doc in documents],
         },
@@ -337,8 +352,10 @@ def document_ingest_status(request, project_id):
                 "status": "failed",
                 "job_id": job_id,
                 "error": payload.get("error") or f"Parsed ingest job failed: {job_status}",
-            },
-            status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                "raw_status": payload.get("status"),
+                "step": payload.get("step"),
+                "result": payload.get("result"),
+            }
         )
 
     return Response(

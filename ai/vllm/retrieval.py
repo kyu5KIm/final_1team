@@ -6,6 +6,7 @@ import sys
 import time
 from dataclasses import dataclass
 from datetime import date, timedelta
+from pathlib import Path
 from typing import Any
 
 from config import FEATURE_CHAT_DIR, qdrant_collection_for_project
@@ -378,6 +379,174 @@ def _retrieve_with_meeting_filter_fallback(
         )
 
 
+DOCUMENT_LOOKUP_KEYWORDS = (
+    "파일",
+    "문서",
+    "자료",
+    "pdf",
+    "업로드",
+    "등록",
+    "적재",
+    "벡터db",
+    "vectordb",
+    "vector db",
+)
+DOCUMENT_LOOKUP_STOPWORDS = {
+    "파일",
+    "문서",
+    "자료",
+    "pdf",
+    "있",
+    "있어",
+    "있나",
+    "있냐",
+    "있나요",
+    "있는지",
+    "존재",
+    "존재해",
+    "등록",
+    "등록된",
+    "업로드",
+    "업로드된",
+    "적재",
+    "적재된",
+    "찾아",
+    "검색",
+    "알려줘",
+    "보여줘",
+    "있는",
+    "없는",
+}
+
+
+def _document_lookup_intent(question: str) -> bool:
+    text = str(question or "").strip().lower()
+    return bool(text) and any(keyword in text for keyword in DOCUMENT_LOOKUP_KEYWORDS)
+
+
+def _document_existence_intent(question: str) -> bool:
+    text = str(question or "").strip().lower()
+    return _document_lookup_intent(text) and any(
+        keyword in text
+        for keyword in ["있", "존재", "등록", "업로드", "적재"]
+    )
+
+
+def _lookup_normalize(value: Any) -> str:
+    return "".join(re.findall(r"[0-9a-zA-Z가-힣]+", str(value or "").lower()))
+
+
+def _lookup_tokens(value: Any) -> set[str]:
+    tokens = {
+        token.lower()
+        for token in re.findall(r"[0-9a-zA-Z가-힣]{2,}", str(value or ""))
+    }
+    return {token for token in tokens if token not in DOCUMENT_LOOKUP_STOPWORDS}
+
+
+def _metadata_name_values(meta: dict[str, Any]) -> list[str]:
+    values: list[str] = []
+    for key in ["source_filename", "file_name", "title", "source", "original_filename"]:
+        value = str(meta.get(key) or "").strip()
+        if not value:
+            continue
+        name = Path(value).name
+        values.append(name)
+        stem = Path(name).stem
+        if stem and stem != name:
+            values.append(stem)
+    out: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        normalized = _lookup_normalize(value)
+        if normalized and normalized not in seen:
+            seen.add(normalized)
+            out.append(value)
+    return out
+
+
+def _document_name_match_score(question: str, meta: dict[str, Any]) -> float:
+    query_norm = _lookup_normalize(question)
+    query_tokens = _lookup_tokens(question)
+    best = 0.0
+    for name in _metadata_name_values(meta):
+        name_norm = _lookup_normalize(name)
+        if not name_norm:
+            continue
+        if name_norm in query_norm:
+            best = max(best, 1.0)
+        name_tokens = _lookup_tokens(name)
+        overlap = query_tokens & name_tokens
+        if overlap:
+            best = max(best, min(0.95, 0.55 + 0.2 * len(overlap)))
+        for token in query_tokens:
+            if len(token) >= 2 and token in name_norm:
+                best = max(best, 0.9)
+    return best
+
+
+def _metadata_file_lookup_hits(module: Any, args: Any, bundle: FeatureChatRagBundle, question: str, top_k: int) -> list[Any]:
+    if not _document_lookup_intent(question):
+        return []
+
+    excluded_types = module.parse_csv(getattr(args, "exclude_chunk_types", ""))
+    args.allowed_meeting_ids = module.recent_meeting_ids(bundle.records, args)
+    best_by_source: dict[str, tuple[float, Any]] = {}
+    for record in bundle.records:
+        meta = getattr(record, "metadata", {}) if isinstance(getattr(record, "metadata", {}), dict) else {}
+        if not module.record_allowed(meta, args, excluded_types):
+            continue
+        score = _document_name_match_score(question, meta)
+        if score <= 0:
+            continue
+        source_key = module.source_label(meta, include_page=False)
+        current = best_by_source.get(source_key)
+        if current is None or score > current[0]:
+            best_by_source[source_key] = (score, record)
+
+    hits: list[Any] = []
+    for rank, (score, record) in enumerate(
+        sorted(best_by_source.values(), key=lambda item: item[0], reverse=True)[:top_k],
+        1,
+    ):
+        meta = getattr(record, "metadata", {}) if isinstance(getattr(record, "metadata", {}), dict) else {}
+        filename = module.source_label(meta, include_page=False)
+        document = (
+            f"문서 메타데이터: '{filename}' 파일은 벡터DB에 등록되어 있습니다.\n"
+            f"{getattr(record, 'document', '') or ''}"
+        )
+        hits.append(
+            module.SearchHit(
+                rank=rank,
+                chunk_id=str(getattr(record, "chunk_id", "")),
+                document=document,
+                metadata=meta,
+                source="metadata",
+                score=float(score),
+                bm25_rank=rank,
+                bm25_score=float(score),
+            )
+        )
+    return hits
+
+
+def _merge_hits(primary_hits: list[Any], secondary_hits: list[Any], *, top_k: int) -> list[Any]:
+    merged: list[Any] = []
+    seen: set[str] = set()
+    for hit in [*primary_hits, *secondary_hits]:
+        chunk_id = str(getattr(hit, "chunk_id", "") or "")
+        meta = getattr(hit, "metadata", {}) if isinstance(getattr(hit, "metadata", {}), dict) else {}
+        key = chunk_id or f"{meta.get('source_filename') or meta.get('file_name') or meta.get('title')}:{meta.get('page') or meta.get('page_start') or ''}"
+        if key in seen:
+            continue
+        seen.add(key)
+        hit.rank = len(merged) + 1
+        merged.append(hit)
+        if len(merged) >= top_k:
+            break
+    return merged
+
+
 def feature_chat_retrieve(
     question: str,
     *,
@@ -407,11 +576,20 @@ def feature_chat_retrieve(
     if not bundle.records:
         return {"context": "", "sources": [], "hit_count": 0, "collection": bundle.collection}
     hits = _retrieve_with_meeting_filter_fallback(module, args, bundle)
+    document_lookup = _document_lookup_intent(question)
+    metadata_hits = _metadata_file_lookup_hits(module, args, bundle, question, top_k)
+    if document_lookup and metadata_hits:
+        hits = _merge_hits(metadata_hits, hits if metadata_hits else [], top_k=top_k)
+    elif _document_existence_intent(question):
+        hits = []
+    sources = module.answer_source_references(hits)
     return {
         "context": module.build_context(hits, int(os.getenv("CHAT_RAG_MAX_CONTEXT_CHARS", "9000"))),
-        "sources": module.answer_source_references(hits),
+        "sources": sources,
         "hit_count": len(hits),
         "collection": bundle.collection,
+        "document_lookup": document_lookup,
+        "document_lookup_matches": module.answer_source_references(metadata_hits) if metadata_hits else [],
     }
 
 
@@ -553,9 +731,12 @@ def _hit_relevance_text(hit: Any) -> str:
             "source",
             "file_name",
             "source_filename",
+            "parent_title",
+            "heading",
+            "article_title",
         ]
     )
-    return f"{metadata_text} {getattr(hit, 'document', '') or ''}"
+    return f"{metadata_text} {meta.get('parent_text') or ''} {getattr(hit, 'document', '') or ''}"
 
 
 def _hit_relevance_score(hit: Any) -> float:
@@ -601,7 +782,11 @@ def filter_previous_meeting_hits(req: PreparationRequest, hits: list[Any]) -> li
 def hit_to_preparation_document(hit: Any, category: str, *, project_id: Any = None) -> dict[str, Any]:
     module = load_feature_chat_rag(project_id=project_id).query_module
     meta = getattr(hit, "metadata", {}) if isinstance(getattr(hit, "metadata", {}), dict) else {}
-    text = module.normalize_context_text(str(getattr(hit, "document", "") or ""))
+    if hasattr(module, "parent_context_text"):
+        raw_text = module.parent_context_text(hit)
+    else:
+        raw_text = str(meta.get("parent_text") or getattr(hit, "document", "") or "")
+    text = module.normalize_context_text(str(raw_text or ""))
     return {
         "category": category,
         "source": module.source_label(meta),
@@ -634,6 +819,13 @@ def hit_to_preparation_document(hit: Any, category: str, *, project_id: Any = No
                 "source_sha256",
                 "source_path",
                 "title",
+                "parent_id",
+                "parent_type",
+                "parent_title",
+                "parent_page_start",
+                "parent_page_end",
+                "child_index",
+                "child_count",
                 "page",
                 "page_idx",
                 "page_no",

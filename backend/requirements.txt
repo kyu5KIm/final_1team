@@ -4,3 +4,5 @@ django-cors-headers>=4.3
 mysqlclient>=2.2
 requests>=2.31
 Pillow>=10.0
+boto3>=1.34
+django-storages[s3]>=1.14

@@ -86,6 +86,44 @@ def create_jira_project(project_name: str, access_token: str, cloud_id: str) -> 
         return {"success": False, "error": str(e), "detail": error_detail}
 
 
+def rank_jira_issue(
+    issue_key: str,
+    access_token: str,
+    cloud_id: str,
+    *,
+    before_issue_key: str | None = None,
+    after_issue_key: str | None = None,
+) -> dict:
+    """이슈를 기준 이슈의 앞(before) 또는 뒤(after)로 순서 이동(Rank)."""
+    if not before_issue_key and not after_issue_key:
+        return {"success": False, "error": "기준 이슈(before/after)가 필요합니다."}
+
+    url = f"https://api.atlassian.com/ex/jira/{cloud_id}/rest/agile/1.0/issue/rank"
+    headers = {
+        "Authorization": f"Bearer {access_token}",
+        "Content-Type": "application/json",
+        "Accept": "application/json",
+    }
+    payload = {"issues": [issue_key]}
+    if before_issue_key:
+        payload["rankBeforeIssue"] = before_issue_key
+    else:
+        payload["rankAfterIssue"] = after_issue_key
+
+    try:
+        response = requests.put(url, json=payload, headers=headers, timeout=10)
+        response.raise_for_status()
+        return {"success": True, "issue_key": issue_key}
+    except requests.RequestException as e:
+        error_detail = ""
+        if hasattr(e, "response") and e.response is not None:
+            try:
+                error_detail = e.response.json()
+            except Exception:
+                error_detail = e.response.text
+        return {"success": False, "error": str(e), "detail": error_detail}
+
+
 def get_jira_config():
     return {
         "client_id": os.getenv("JIRA_CLIENT_ID", ""),
@@ -154,21 +192,22 @@ def create_jira_issues_from_todo(todo_list: list, access_token: str, cloud_id: s
     return results
 
 
-def get_jira_issues(access_token : str, cloud_id: str, project_key : str) -> dict:
+
+def get_jira_issues(access_token: str, cloud_id: str, project_key: str) -> dict:
 
     if not all([access_token, cloud_id, project_key]):
-        return {"success" : False, "error": "Jira 연동 정보가 없습니다."}
-    
+        return {"success": False, "error": "Jira 연동 정보가 없습니다."}
+
     url = f"https://api.atlassian.com/ex/jira/{cloud_id}/rest/api/3/search/jql"
     headers = {
-        "Authorization" : f"Bearer {access_token}",
-        "Accept" : "application/json",
+        "Authorization": f"Bearer {access_token}",
+        "Accept": "application/json",
         "Content-Type": "application/json",
     }
 
     payload = {
-        "jql" : f"project = {project_key} ORDER BY created DESC",
-        "maxResults" : 100,
+        "jql": f"project = {project_key} ORDER BY created DESC",
+        "maxResults": 100,
         "fields": ["summary", "status", "assignee", "priority", "duedate", "created"],
     }
 
@@ -177,12 +216,12 @@ def get_jira_issues(access_token : str, cloud_id: str, project_key : str) -> dic
         response.raise_for_status()
         data = response.json()
 
-        columns = {"todo" : [], "progress":[], "review" : [],"done" :[]}
+        columns = {"todo": [], "progress": [], "review": [], "done": []}
 
         for issue in data.get("issues", []):
             fields = issue.get("fields", {})
 
-            jira_status = fields.get("status",{}).get("name", "")
+            jira_status = fields.get("status", {}).get("name", "")
             column_id = JIRA_STATUS_TO_COLUMN.get(jira_status, "todo")
 
             assignee = ""
@@ -194,14 +233,14 @@ def get_jira_issues(access_token : str, cloud_id: str, project_key : str) -> dic
                 priority = fields["priority"].get("name", "")
 
             columns[column_id].append({
-                "issue_key" : issue.get("key"),
-                "title" : fields.get("summary", ""),
-                "assignee" : assignee,
-                "priority" : priority,
-                "due_date" : fields.get("duedate", ""),
+                "issue_key": issue.get("key"),
+                "title": fields.get("summary", ""),
+                "assignee": assignee,
+                "priority": priority,
+                "due_date": fields.get("duedate", ""),
             })
-        return {"success" : True, "columns" : columns}
-    
+        return {"success": True, "columns": columns}
+
     except requests.RequestException as e:
         error_detail = ""
         if hasattr(e, "response") and e.response is not None:
@@ -209,8 +248,7 @@ def get_jira_issues(access_token : str, cloud_id: str, project_key : str) -> dic
                 error_detail = e.response.json()
             except Exception:
                 error_detail = e.response.text
-        return {"success" : False, "error" : str(e), "detail" : error_detail}
-        
+        return {"success": False, "error": str(e), "detail": error_detail}   
 
 
 def update_jira_issue_status(

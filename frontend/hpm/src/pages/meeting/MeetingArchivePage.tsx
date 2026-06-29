@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useParams } from "react-router-dom";
 import html2canvas from "html2canvas";
 import { jsPDF } from "jspdf";
@@ -15,6 +15,7 @@ import {
   type AgendaItem,
   type MeetingPreparation,
 } from "../../services/meeting";
+import { dedupePreparationSources } from "../../utils/dedupeSources";
 
 type TabKey = "minutes" | "record" | "material" | "email";
 
@@ -98,13 +99,14 @@ export default function MeetingArchivePage() {
 
   const participantNames = meeting.participants?.map(p => p.name).join(", ") || "-";
   const writer = meeting.participants?.[0]?.name || "-";
+  const uniquePrepSources = useMemo(() => dedupePreparationSources(prep?.sources), [prep?.sources]);
   const hasMeetingMaterial = Boolean(
     agenda.length > 0 ||
     prep?.purpose ||
     prep?.project_status ||
     prep?.rule ||
     prep?.effect ||
-    prep?.sources?.length,
+    uniquePrepSources.length,
   );
   const selectedRecipientIds = new Set(recipients.map(recipient => recipient.user_id));
   const normalizedRecipientQuery = emailRecipientQuery.trim().toLowerCase();
@@ -582,8 +584,8 @@ export default function MeetingArchivePage() {
             <div>
               <p className="text-[14px] font-bold mb-2" style={{ color: "#141414" }}>참고 자료</p>
               <div className="border rounded-xl px-5 py-3 space-y-1" style={{ borderColor: "#E6E1E6" }}>
-                {prep?.sources?.length ? (
-                  prep.sources.map((src, i) => (
+                {uniquePrepSources.length ? (
+                  uniquePrepSources.map((src, i) => (
                     <p key={i} className="text-[13px]">
                       <span style={{ color: "#141414" }}>- {src.title} </span>
                       <a href={src.file_url} target="_blank" rel="noreferrer" className="cursor-pointer hover:underline" style={{ color: "#623FB5" }}>더보기</a>

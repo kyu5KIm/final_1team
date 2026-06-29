@@ -151,3 +151,19 @@ class RecordUtterance(models.Model):
         db_table = "record_utterance"
         verbose_name = "발화 내역"
         verbose_name_plural = "발화 내역"
+
+
+class MeetingOcrDocument(models.Model):
+    class Kind(models.TextChoices):
+        AGENDA = "agenda", "기초 안건"
+        PREP = "prep", "회의 준비 자료"
+
+    meeting_ocr_document_id = models.AutoField(primary_key=True, verbose_name="OCR 문서 식별번호")
+    meeting = models.ForeignKey(
+        Meeting, on_delete=models.CASCADE, db_column="meeting_id", verbose_name="회의"
+    )
+    document_id = models.IntegerField(verbose_name="내부문서 식별번호")
+    kind = models.CharField(max_length=20, choices=Kind.choices, verbose_name="용도")
+
+    class Meta:
+        db_table = "meeting_ocr_document"

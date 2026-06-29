@@ -1,8 +1,9 @@
-import { useRef, useState, useEffect } from "react";
+import { useRef, useState, useEffect, useMemo } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import html2canvas from "html2canvas";
 import { jsPDF } from "jspdf";
 import { getPrepMaterial, savePrepMaterial, generatePrepMaterial } from "../../services/meeting";
+import { dedupePreparationSources } from "../../utils/dedupeSources";
 
 const MAX = { purpose: 500, currentState: 1000, regulations: 1000, expected: 500 };
 
@@ -22,6 +23,7 @@ export default function PrepMaterialPage() {
   const [sources, setSources] = useState<{ document_id: number; title: string; file_url: string }[]>([]);
   const [loading, setLoading] = useState(true);
   const [generationError, setGenerationError] = useState("");
+  const uniqueSources = useMemo(() => dedupePreparationSources(sources), [sources]);
 
   useEffect(() => {
     let active = true;
@@ -97,7 +99,7 @@ export default function PrepMaterialPage() {
         { label: "프로젝트 현재 상태", value: currentState },
         { label: "관련 규정 및 제약사항", value: regulations },
         { label: "회의 종료 후 기대 결과", value: expected },
-        { label: "출처", value: sources && sources.length > 0 ? sources.map(r => `- ${r.title}`).join("\n") : "- 출처가 없습니다." },
+        { label: "출처", value: uniqueSources.length > 0 ? uniqueSources.map(r => `- ${r.title}`).join("\n") : "- 출처가 없습니다." },
       ];
 
       const wrapper = document.createElement("div");
@@ -273,8 +275,8 @@ export default function PrepMaterialPage() {
         <div>
           <p className="text-[14px] text-[#141414] font-bold mb-2">출처</p>
           <div className="border border-[#E6E1E6] rounded-xl px-4 py-3 bg-white space-y-2">
-            {sources && sources.length > 0 ? (
-              sources.map((src, i) => (
+            {uniqueSources.length > 0 ? (
+              uniqueSources.map((src, i) => (
                 <div key={i} className="flex items-center gap-2 text-[13px]">
                   <span className="text-[#767676]">- {src.title}</span>
                   {src.file_url ? (

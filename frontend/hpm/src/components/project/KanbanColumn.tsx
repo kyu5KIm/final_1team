@@ -1,4 +1,4 @@
-import { type CSSProperties } from "react";
+import { useState, type CSSProperties, type DragEvent } from "react";
 import plusIcon from "../../assets/kanban/plus.png";
 import {
   KANBAN_CARD_GAP,
@@ -62,11 +62,10 @@ interface KanbanColumnProps {
   onEditTask: (task: KanbanTask) => void;
   onCardDragStart?: (task: KanbanTask) => void;
   onCardDragEnd?: () => void;
-  onDropTask?: (columnId: KanbanColumnId) => void;
+  onDropOnColumn?: (columnId: KanbanColumnId) => void;
+  onDropOnCard?: (task: KanbanTask) => void;
   draggingTaskId?: number | null;
-  isDragActive?: boolean;
   canManage?: boolean;
-  minHeight?: number;
 }
 
 export default function KanbanColumn({
@@ -74,20 +73,45 @@ export default function KanbanColumn({
   tasks,
   onAddTask,
   onEditTask,
+  onCardDragStart,
+  onCardDragEnd,
+  onDropOnColumn,
+  onDropOnCard,
+  draggingTaskId = null,
   canManage = true,
 }: KanbanColumnProps) {
 
   const hasTasks = tasks.length > 0;
+  const [isOver, setIsOver] = useState(false);
+
+  const handleDragOver = (event: DragEvent<HTMLElement>) => {
+    if (!canManage) return;
+    event.preventDefault();
+    event.dataTransfer.dropEffect = "move";
+    if (!isOver) setIsOver(true);
+  };
+
+  const handleDragLeave = () => setIsOver(false);
+
+  const handleDrop = (event: DragEvent<HTMLElement>) => {
+    if (!canManage) return;
+    event.preventDefault();
+    setIsOver(false);
+    onDropOnColumn?.(column.id);
+  };
 
   return (
     <section
+      onDragOver={handleDragOver}
+      onDragLeave={handleDragLeave}
+      onDrop={handleDrop}
       className={`absolute rounded-[12px] mt-[-20px] transition-all`}
       style={{
         left: column.left,
         top: KANBAN_COLUMN_TOP,
         width: 352,
         height: "auto",
-        backgroundColor: "#ECECF2",
+        backgroundColor: isOver ? "#E3DBF7" : "#ECECF2",
       }}
       data-name="dashboard-card-group"
     >
@@ -107,6 +131,10 @@ export default function KanbanColumn({
                   top={KANBAN_FIRST_CARD_TOP + index * KANBAN_CARD_GAP}
                   onClick={() => onEditTask(task)}
                   canManage={canManage}
+                  isDragging={draggingTaskId === task.id}
+                  onDragStart={onCardDragStart}
+                  onDragEnd={onCardDragEnd}
+                  onDropOnCard={onDropOnCard}
                 />
               ))}
               {canManage ? (

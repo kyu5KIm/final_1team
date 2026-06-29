@@ -173,6 +173,11 @@ AWS_STORAGE_BUCKET_NAME = os.environ.get("AWS_STORAGE_BUCKET_NAME", "")
 
 # 버킷이 있는 리전 (ap-northeast-2 = 서울)
 AWS_S3_REGION_NAME = os.environ.get("AWS_S3_REGION_NAME", "ap-northeast-2")
+AWS_S3_ENDPOINT_URL = os.environ.get(
+    "AWS_S3_ENDPOINT_URL",
+    f"https://s3.{AWS_S3_REGION_NAME}.amazonaws.com",
+)
+AWS_S3_SIGNATURE_VERSION = "s3v4"
 
 # 같은 이름 파일 업로드 시 덮어쓰지 않고 자동으로 이름 변경
 AWS_S3_FILE_OVERWRITE = False
@@ -189,5 +194,8 @@ AWS_QUERYSTRING_EXPIRE = 3600
 if AWS_STORAGE_BUCKET_NAME:   # .env에 버킷 이름이 있으면
     STORAGES = {
         # 파일 저장 기본값 → S3에 저장
-        "default": {"BACKEND": "storages.backends.s3.S3Storage"}
+        "default": {"BACKEND": "storages.backends.s3.S3Storage"},
+        "staticfiles": {
+            "BACKEND": "django.contrib.staticfiles.storage.StaticFilesStorage",
+        },
     }

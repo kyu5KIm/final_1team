@@ -109,12 +109,41 @@ def _convert_docx_to_pdf(docx_path: Path, pdf_dir: Path) -> Path:
     return pdf_path
 
 
-def _file_metadata(base_metadata: dict[str, Any], upload: UploadedDocument, saved_path: Path) -> dict[str, Any]:
+def _document_entry_for_upload(base_metadata: dict[str, Any], upload: UploadedDocument, index: int) -> dict[str, Any]:
+    documents = base_metadata.get("documents") if isinstance(base_metadata.get("documents"), list) else []
+    for item in documents:
+        if not isinstance(item, dict):
+            continue
+        if _int_like(item.get("index")) == str(index):
+            return item
+
+    filename = str(upload.filename or "")
+    for item in documents:
+        if isinstance(item, dict) and str(item.get("filename") or "") == filename:
+            return item
+
+    document_map = base_metadata.get("document_map") if isinstance(base_metadata.get("document_map"), dict) else {}
+    document_id = document_map.get(filename)
+    if document_id not in (None, ""):
+        return {"filename": filename, "document_id": document_id}
+    return {}
+
+
+def _file_metadata(base_metadata: dict[str, Any], upload: UploadedDocument, saved_path: Path, index: int) -> dict[str, Any]:
     metadata = dict(base_metadata)
-    metadata.setdefault("title", upload.filename)
-    metadata.setdefault("source_filename", upload.filename)
-    metadata.setdefault("file_name", upload.filename)
-    metadata.setdefault("source_path", str(base_metadata.get("source_path") or base_metadata.get("document_path") or saved_path))
+    document_entry = _document_entry_for_upload(base_metadata, upload, index)
+    document_id = _int_like(document_entry.get("document_id"))
+    filename = str(document_entry.get("filename") or upload.filename)
+
+    metadata["title"] = filename
+    metadata["source_filename"] = filename
+    metadata["file_name"] = filename
+    metadata.setdefault("source_path", str(document_entry.get("path") or base_metadata.get("source_path") or base_metadata.get("document_path") or saved_path))
+    if document_id:
+        metadata["document_id"] = document_id
+        metadata["viewer_id"] = document_id
+    if document_entry.get("path"):
+        metadata["storage_key"] = str(document_entry.get("path"))
     metadata["source_sha256"] = file_sha256(saved_path)
     return metadata
 
@@ -149,6 +178,7 @@ def _prepare_uploads(files: list[UploadedDocument], raw_dir: Path, pdf_dir: Path
     saved: list[dict[str, Any]] = []
     text_chunks: list[dict[str, Any]] = []
     conversions: list[dict[str, Any]] = []
+    metadata_by_source_filename: dict[str, dict[str, Any]] = {}
 
     for index, upload in enumerate(files, start=1):
         original_suffix = Path(upload.filename or "").suffix.lower()
@@ -158,6 +188,7 @@ def _prepare_uploads(files: list[UploadedDocument], raw_dir: Path, pdf_dir: Path
         filename = _safe_filename(upload.filename, index, original_suffix)
         path = raw_dir / filename
         path.write_bytes(upload.content)
+        per_file_metadata = _file_metadata(metadata, upload, path, index)
         saved_record = {
             "original_filename": upload.filename,
             "saved_filename": filename,
@@ -170,13 +201,14 @@ def _prepare_uploads(files: list[UploadedDocument], raw_dir: Path, pdf_dir: Path
             target = pdf_dir / filename
             shutil.copy2(path, target)
             saved_record["parser_input"] = str(target)
+            metadata_by_source_filename[target.name] = per_file_metadata
         elif original_suffix == ".docx":
             pdf_path = _convert_docx_to_pdf(path, pdf_dir)
             saved_record["parser_input"] = str(pdf_path)
+            metadata_by_source_filename[pdf_path.name] = per_file_metadata
             conversions.append({"source": str(path), "target": str(pdf_path), "converter": "libreoffice"})
         elif original_suffix == ".txt":
             text, encoding = _decode_text(upload.content)
-            per_file_metadata = _file_metadata(metadata, upload, path)
             per_file_metadata["parser"] = "text"
             per_file_metadata["source_file_extension"] = ".txt"
             chunks = make_text_chunks(text, per_file_metadata)
@@ -186,7 +218,12 @@ def _prepare_uploads(files: list[UploadedDocument], raw_dir: Path, pdf_dir: Path
 
         saved.append(saved_record)
 
-    return {"saved_files": saved, "text_chunks": text_chunks, "conversions": conversions}
+    return {
+        "saved_files": saved,
+        "text_chunks": text_chunks,
+        "conversions": conversions,
+        "metadata_by_source_filename": metadata_by_source_filename,
+    }
 
 
 def ingest_uploaded_documents(
@@ -243,6 +280,7 @@ def ingest_uploaded_documents(
                     parsed_dir=parsed_dir,
                     chunks_dir=chunks_dir,
                     metadata=metadata,
+                    metadata_by_source_filename=prepared["metadata_by_source_filename"],
                     require_cuda=require_cuda,
                     qdrant_url=qdrant_url,
                     qdrant_api_key=qdrant_api_key,

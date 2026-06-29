@@ -108,14 +108,14 @@ def preparation_messages(req: PreparationRequest, selected_documents: dict[str, 
 
 [핵심 규칙]
 1. 제공된 자료([프로젝트 히스토리], [내부 문서], [외부 뉴스])에 명시된 내용만 사용합니다. 사실을 추정하거나 지어내지 마십시오.
-2. 문서에서 확인되지 않거나 누락된 정보는 반드시 "확인 필요"로 표기합니다.
+2. 문서에서 확인되지 않거나 누락된 정보는 반드시 "-"로 표기합니다.
 3. 주어진 [회의 주제], [프로젝트 누적 맥락], [OCR 참고 텍스트], [안건]과 직접 관련 없는 정보는 제외합니다.
 4. 프로젝트 누적 맥락은 배경 판단용으로만 사용합니다. 입력 문장을 그대로 복사하지 말고, 이번 회의 준비에 필요한 현재 상태, 결정사항, 미완료 쟁점만 재구성합니다.
 5. 이전회의록은 회의 주제, 안건, 프로젝트 맥락, OCR 참고 텍스트와 직접 관련된 경우에만 사용합니다. 관련 이전회의록이 없으면 "관련 이전 회의록 확인 불가"로 작성합니다.
 6. 내부 문서는 정책, 절차, 요구사항, 제약조건, 기준을 확인하는 데 우선 사용합니다.
 7. OCR 참고 텍스트는 사용자가 방금 업로드한 회의 관련 문서 내용으로 보고, 회의 목적과 안건 보강에 사용합니다.
 8. 외부 뉴스는 항상 참고하여 회의 주제와 연결되는 최신 외부 동향, 시장 상황, 리스크를 반영합니다.
-9. 이전회의록과 내부 문서의 내용이 충돌하면 어느 쪽이 맞는지 단정하지 말고 "확인 필요"로 표시합니다.
+9. 이전회의록과 내부 문서의 내용이 충돌하면 어느 쪽이 맞는지 단정하지 말고 "-"로 표시합니다.
 10. 모든 핵심 문장 끝에는 가능한 경우 [출처명] 형태로 출처를 붙입니다. 출처가 없으면 붙이지 않습니다.
 11. 출력은 반드시 유효한 JSON 객체 하나만 반환합니다.
 12. JSON 밖에는 코드블록, 설명 문장, 마크다운을 절대 출력하지 마십시오.
@@ -138,8 +138,8 @@ def preparation_messages(req: PreparationRequest, selected_documents: dict[str, 
   "preparation_id": null,
   "meeting_id": "{req.meeting_id}",
   "purpose": "이번 회의에서 확정하거나 점검해야 할 목적을 2~3개로 정리",
-  "project_status": "입력 맥락을 그대로 복사하지 말고 이번 회의 준비에 필요한 현재 진행 상태, 지난 결정사항, 미완료 쟁점을 재구성. 근거가 부족하면 확인 필요",
-  "rule": "관련 내부문서 근거, 정책, 절차, 요구사항, 제약조건, 확인 필요 사항을 정리",
+  "project_status": "입력 맥락을 그대로 복사하지 말고 이번 회의 준비에 필요한 현재 진행 상태, 지난 결정사항, 미완료 쟁점을 재구성. 근거가 부족하면 -",
+  "rule": "관련 내부문서 근거, 정책, 절차, 요구사항, 제약조건, 누락 항목을 정리",
   "effect": "회의 종료 후 기대 결과와 참석자가 회의 전 준비해야 할 항목을 정리",
   "sources": [
     {{
@@ -158,7 +158,7 @@ def preparation_messages(req: PreparationRequest, selected_documents: dict[str, 
             "preparation_id, meeting_id, purpose, project_status, rule, effect, sources. "
             "preparation_id must be null unless it is provided by the input. "
             "sources must be an array of objects with title and document_id; document_id may be null when the source has no backend document id. "
-            "Use only the provided evidence. If evidence is missing, write '확인 필요'. "
+            "Use only the provided evidence. If evidence is missing, write '-'. "
             "Separate previous meeting context from internal document requirements. "
             "Prefer concrete decisions, todos, owners, dates, policy clauses, constraints, and open questions. "
             "Do not invent facts.",
@@ -178,10 +178,10 @@ def preparation_messages(req: PreparationRequest, selected_documents: dict[str, 
 
 [작성 규칙]
 1. 입력 데이터에 없는 사실을 추정하지 마세요.
-2. 근거가 부족한 항목은 "확인 필요"라고 쓰세요.
+2. 근거가 부족한 항목은 "-"라고 쓰세요.
 3. OCR 참고 텍스트는 사용자가 방금 올린 회의 관련 문서로 보고 회의 목적과 안건 보강에 사용하세요.
 4. 이전 회의록은 현재 회의 주제와 직접 관련될 때만 사용하세요.
-5. 내부 문서에서는 정책, 절차, 요구사항, 제약조건, 확인 필요 사항을 우선 반영하세요.
+5. 내부 문서에서는 정책, 절차, 요구사항, 제약조건, 누락 항목을 우선 반영하세요.
 6. JSON 밖에는 설명, 코드블록, 마크다운을 절대 출력하지 마세요.
 7. 문자열 안의 줄바꿈은 실제 줄바꿈이 아니라 "\\n"으로 이스케이프하세요.
 8. 최상위 key는 반드시 preparation_id, meeting_id, purpose, project_status, rule, effect, sources 만 사용하세요.
@@ -204,7 +204,7 @@ def preparation_messages(req: PreparationRequest, selected_documents: dict[str, 
   "meeting_id": "{req.meeting_id}",
   "purpose": "이번 회의에서 논의하거나 결정해야 할 목적을 2~3문장으로 정리",
   "project_status": "현재 진행 상태, 미결 사항, 결정 필요 사항을 근거 기반으로 정리",
-  "rule": "관련 규정, 절차, 제약사항, 확인 필요 사항을 정리",
+  "rule": "관련 규정, 절차, 제약사항, 누락 항목을 정리",
   "effect": "회의 종료 후 기대 결과와 참석자가 준비해야 할 항목을 정리",
   "sources": [
     {{
@@ -225,7 +225,7 @@ def preparation_messages(req: PreparationRequest, selected_documents: dict[str, 
                 "preparation_id, meeting_id, purpose, project_status, rule, effect, sources. "
                 "preparation_id must be null unless it is provided by the input. "
                 "sources must be an array of objects with title and document_id; document_id may be null when the source has no backend document id. "
-                "Use only the provided evidence. If evidence is missing, write '확인 필요'. "
+                "Use only the provided evidence. If evidence is missing, write '-'. "
                 "Escape newlines inside string values as \\n. "
                 "Do not invent facts."
             ),
@@ -358,6 +358,7 @@ def chat_messages(
 
 확인되지 않은 내용은 추정하지 않는다.
 근거가 부족해서 답할 수 없으면 "관련 문서에서 확인할 수 있는 내용이 없습니다."라고 답하고, 출처 섹션을 만들지 않는다.
+파일명이나 문서 존재 여부를 묻는 질문은 [내부문서 근거]의 "출처:" 줄과 [사용 가능한 출처]의 파일명을 근거로 답한다.
 본문에는 URL을 직접 적지 않는다.
 본문에서 출처가 필요한 문장 끝에는 [1], [2]처럼 번호만 붙인다.
 답변 마지막에만 "출처:" 섹션을 만들고 실제 사용한 출처 목록을 표시한다.

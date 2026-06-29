@@ -41,7 +41,7 @@ FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:5173")
 JIRA_CLIENT_ID = os.getenv("JIRA_CLIENT_ID", "")
 JIRA_CLIENT_SECRET = os.getenv("JIRA_CLIENT_SECRET", "")
 JIRA_REDIRECT_URI = os.getenv("JIRA_REDIRECT_URI", "http://localhost:8000/api/jira/callback/")
-JIRA_SCOPES = "read:jira-work write:jira-work read:board-scope:jira-software offline_access"
+JIRA_SCOPES = "read:jira-work write:jira-work read:board-scope:jira-software write:issue:jira-software offline_access"
 
 
 def _hash_pw(raw: str) -> str:
@@ -727,9 +727,8 @@ def admin_user_list(request):
 
         if len(email) > 50:
             return Response({"error": "이메일은 50자 이하여야 합니다."}, status=status.HTTP_400_BAD_REQUEST)
-        local, _, domain = email.partition("@")
-        if not re.match(r'^[a-zA-Z0-9]+$', local):
-            return Response({"error": "이메일 @ 앞은 영문과 숫자만 가능합니다."}, status=status.HTTP_400_BAD_REQUEST)
+        if not re.match(r'^[^\s@]+@[^\s@]+\.[^\s@]+$', email):
+            return Response({"error": "이메일 형식이 올바르지 않습니다."}, status=status.HTTP_400_BAD_REQUEST)
 
 
         if len(name) > 30:

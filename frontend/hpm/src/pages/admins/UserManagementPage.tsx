@@ -30,7 +30,7 @@ interface UserProject {
 interface RegisterForm {
   emp_no: string;
   name: string;
-  emailPrefix: string;
+  email: string;
   dept: string;
   rank: string;
   work: string;
@@ -54,10 +54,10 @@ const STATUS_VALUES: Record<string, number> = { "재직": 0, "휴직": 1, "퇴�
 
 const EMP_NO_PATTERN = /^\d{4}-[A-Z]+-\d+$/;
 const NAME_PATTERN = /^[가-힣a-zA-Z]{1,30}$/;
-const EMAIL_PREFIX_PATTERN = /^[a-zA-Z0-9]{1,50}$/;
+const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 const INIT_REGISTER: RegisterForm = {
-  emp_no: "", name: "", emailPrefix: "", dept: "", rank: "", work: "", status: "재직",
+  emp_no: "", name: "", email: "", dept: "", rank: "", work: "", status: "재직",
 };
 const INIT_ERRORS: RegisterErrors = {
   emp_no: "", name: "", email: "", dept: "", rank: "", work: "",
@@ -228,10 +228,10 @@ export default function UserManagementPage() {
       errors.name = "한글, 영어만 포함하여 최대 30자 이내로 입력해 주세요."; valid = false;
     }
 
-    if (!registerForm.emailPrefix) {
+    if (!registerForm.email) {
       errors.email = "필수 항목을 입력해주세요."; valid = false;
-    } else if (!EMAIL_PREFIX_PATTERN.test(registerForm.emailPrefix)) {
-      errors.email = "영어,숫자만 포함하여 최대 50자 이내로 입력해 주세요."; valid = false;
+    } else if (!EMAIL_PATTERN.test(registerForm.email) || registerForm.email.length > 50) {
+      errors.email = "이메일 형식에 맞게 50자 이내로 입력해 주세요."; valid = false;
     }
 
     if (!registerForm.dept) { errors.dept = "필수 항목을 입력해주세요."; valid = false; }
@@ -248,7 +248,7 @@ export default function UserManagementPage() {
     const created = await createAdminUser({
       emp_no: registerForm.emp_no,
       name: registerForm.name,
-      email: `${registerForm.emailPrefix}@company.com`,
+      email: registerForm.email,
       dept_name: registerForm.dept,
       rank_name: registerForm.rank,
       work: registerForm.work,
@@ -593,16 +593,13 @@ export default function UserManagementPage() {
               {/* 이메일 */}
               <div className="flex flex-col gap-1">
                 <label className="text-[14px] font-medium text-[#0A0A0A]">이메일 <span className="text-red-500">*</span></label>
-                <div className="flex items-center gap-2">
-                  <input value={registerForm.emailPrefix}
-                    onChange={(e) => setRegisterForm({ ...registerForm, emailPrefix: e.target.value })}
-                    placeholder="예: hpm123" maxLength={50}
-                    className="flex-1 px-4 py-3 border border-[#E5E5E5] rounded-md text-[15px] outline-none focus:border-[#623FB5] transition-colors" />
-                  <span className="text-[15px] text-[#0A0A0A] whitespace-nowrap">@company.com</span>
-                </div>
+                <input value={registerForm.email}
+                  onChange={(e) => setRegisterForm({ ...registerForm, email: e.target.value })}
+                  placeholder="예: hpm123@company.com" maxLength={50}
+                  className="w-full px-4 py-3 border border-[#E5E5E5] rounded-md text-[15px] outline-none focus:border-[#623FB5] transition-colors" />
                 <div className="flex justify-between items-center">
                   <span className="text-[12px] text-blue-500">{registerErrors.email}</span>
-                  <span className="text-[12px] text-[#969696]">{registerForm.emailPrefix.length}/50</span>
+                  <span className="text-[12px] text-[#969696]">{registerForm.email.length}/50</span>
                 </div>
               </div>
 

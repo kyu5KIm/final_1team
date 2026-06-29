@@ -457,6 +457,17 @@ export const updateProjectJiraIssueStatus = async (
   return res.data;
 };
 
+export const rankProjectJiraIssue = async (
+  projectId: number,
+  issueKey: string,
+  position: { beforeIssueKey?: string; afterIssueKey?: string },
+): Promise<void> => {
+  await api.patch(`/projects/${projectId}/jira-board/issue/${issueKey}/rank/`, {
+    before_issue_key: position.beforeIssueKey,
+    after_issue_key: position.afterIssueKey,
+  });
+};
+
 export const addProjectMembers = async (projectId: number, memberIds: number[]): Promise<void> => {
   await api.patch(`/projects/${projectId}/`, { add_member_ids: memberIds });
 };
